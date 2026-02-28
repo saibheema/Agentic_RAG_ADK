@@ -1,0 +1,19 @@
+kind: sources
+name: tidb_main
+type: tidb
+host: ${TIDB_HOST}
+port: ${TIDB_PORT}
+database: ${TIDB_DATABASE}
+user: ${TIDB_USER}
+password: ${TIDB_PASSWORD}
+---
+kind: tools
+name: tidb_execute_sql
+type: tidb-execute-sql
+source: tidb_main
+description: Execute SQL in TiDB.
+---
+kind: toolsets
+name: tidb_readonly
+tools:
+  - tidb_execute_sql

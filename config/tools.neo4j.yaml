@@ -1,0 +1,18 @@
+kind: sources
+name: neo4j_main
+type: neo4j
+uri: ${NEO4J_URI}
+user: ${NEO4J_USER}
+password: ${NEO4J_PASSWORD}
+database: ${NEO4J_DATABASE}
+---
+kind: tools
+name: neo4j_execute_cypher
+type: neo4j-execute-cypher
+source: neo4j_main
+description: Execute Cypher against Neo4j graph database.
+---
+kind: toolsets
+name: neo4j_readonly
+tools:
+  - neo4j_execute_cypher

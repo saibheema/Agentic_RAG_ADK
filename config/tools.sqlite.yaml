@@ -1,0 +1,15 @@
+kind: sources
+name: sqlite_main
+type: sqlite
+database: ${SQLITE_DB_PATH}
+---
+kind: tools
+name: sqlite_execute_sql
+type: sqlite-execute-sql
+source: sqlite_main
+description: Execute SQL against SQLite for local development.
+---
+kind: toolsets
+name: sqlite_readonly
+tools:
+  - sqlite_execute_sql

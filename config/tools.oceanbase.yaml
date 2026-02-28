@@ -1,0 +1,19 @@
+kind: sources
+name: oceanbase_main
+type: oceanbase
+host: ${OCEANBASE_HOST}
+port: ${OCEANBASE_PORT}
+database: ${OCEANBASE_DATABASE}
+user: ${OCEANBASE_USER}
+password: ${OCEANBASE_PASSWORD}
+---
+kind: tools
+name: oceanbase_execute_sql
+type: oceanbase-execute-sql
+source: oceanbase_main
+description: Execute SQL in OceanBase.
+---
+kind: toolsets
+name: oceanbase_readonly
+tools:
+  - oceanbase_execute_sql

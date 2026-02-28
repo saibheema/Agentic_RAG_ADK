@@ -1,0 +1,16 @@
+kind: sources
+name: bq_main
+type: bigquery
+project: ${BQ_PROJECT}
+location: ${BQ_LOCATION}
+---
+kind: tools
+name: bq_execute_sql
+type: bigquery-execute-sql
+source: bq_main
+description: Execute SQL in BigQuery for analytics.
+---
+kind: toolsets
+name: bq_readonly
+tools:
+  - bq_execute_sql

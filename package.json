@@ -1,0 +1,20 @@
+{
+  "name": "agentic_rag",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@google-cloud/cloud-run-mcp": "^1.9.0",
+    "@google-cloud/gcloud-mcp": "^0.5.3",
+    "@google-cloud/observability-mcp": "^0.2.3",
+    "@google-cloud/storage-mcp": "^0.3.3",
+    "@googlemaps/code-assist-mcp": "^0.2.1"
+  }
+}

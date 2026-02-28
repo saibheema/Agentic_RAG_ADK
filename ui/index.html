@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Agentic RAG Chat</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="layout">
+      <header class="topbar">
+        <h1>Agentic RAG Chat</h1>
+        <p>Custom JSON-rendered UI on top of ADK API</p>
+      </header>
+
+      <section class="controls card">
+        <div class="grid">
+          <label>
+            API Base URL
+            <input id="apiBase" type="text" placeholder="https://agentic-rag-chat-...run.app" />
+          </label>
+          <label>
+            App Name
+            <input id="appName" type="text" value="agentic_rag" />
+          </label>
+          <label>
+            User ID
+            <input id="userId" type="text" value="web-user" />
+          </label>
+          <label>
+            Session ID
+            <input id="sessionId" type="text" readonly />
+          </label>
+        </div>
+        <div class="actions">
+          <button id="newSessionBtn" type="button">New Session</button>
+          <button id="clearChatBtn" type="button" class="secondary">Clear Chat</button>
+        </div>
+      </section>
+
+      <section id="chat" class="chat card" aria-live="polite"></section>
+
+      <section class="composer card">
+        <form id="chatForm">
+          <textarea id="prompt" rows="3" placeholder="Ask a question about orders, sales by region, or top customers..."></textarea>
+          <div class="actions end">
+            <button id="sendBtn" type="submit">Send</button>
+          </div>
+        </form>
+      </section>
+    </main>
+
+    <template id="msgTemplate">
+      <article class="msg">
+        <div class="msg-meta"></div>
+        <div class="msg-body"></div>
+      </article>
+    </template>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

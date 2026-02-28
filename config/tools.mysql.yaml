@@ -1,0 +1,36 @@
+kind: sources
+name: mysql_main
+type: mysql
+host: ${MYSQL_HOST}
+port: ${MYSQL_PORT}
+database: ${MYSQL_DATABASE}
+user: ${MYSQL_USER}
+password: ${MYSQL_PASSWORD}
+---
+kind: tools
+name: mysql_list_tables
+type: mysql-list-tables
+source: mysql_main
+description: Lists tables in MySQL.
+---
+kind: tools
+name: mysql_recent_orders
+type: mysql-sql
+source: mysql_main
+description: Read-only query for recent orders.
+readOnly: true
+statement: |
+  SELECT id, created_at, status, total_amount
+  FROM orders
+  ORDER BY created_at DESC
+  LIMIT ?;
+parameters:
+  - name: limit_count
+    type: integer
+    description: Number of rows to return.
+---
+kind: toolsets
+name: mysql_readonly
+tools:
+  - mysql_list_tables
+  - mysql_recent_orders

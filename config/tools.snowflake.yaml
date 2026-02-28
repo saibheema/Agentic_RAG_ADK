@@ -1,0 +1,20 @@
+kind: sources
+name: snowflake_main
+type: snowflake
+account: ${SNOWFLAKE_ACCOUNT}
+warehouse: ${SNOWFLAKE_WAREHOUSE}
+database: ${SNOWFLAKE_DATABASE}
+schema: ${SNOWFLAKE_SCHEMA}
+user: ${SNOWFLAKE_USER}
+password: ${SNOWFLAKE_PASSWORD}
+---
+kind: tools
+name: snowflake_execute_sql
+type: snowflake-execute-sql
+source: snowflake_main
+description: Execute SQL in Snowflake.
+---
+kind: toolsets
+name: snowflake_readonly
+tools:
+  - snowflake_execute_sql

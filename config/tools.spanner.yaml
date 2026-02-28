@@ -1,0 +1,26 @@
+kind: sources
+name: spanner_main
+type: spanner
+project: ${SPANNER_PROJECT}
+instance: ${SPANNER_INSTANCE}
+database: ${SPANNER_DATABASE}
+dialect: googlesql
+---
+kind: tools
+name: spanner_list_tables
+type: spanner-list-tables
+source: spanner_main
+description: Lists tables in Spanner database.
+---
+kind: tools
+name: spanner_orders_dql
+type: spanner-execute-sql
+source: spanner_main
+description: Read-only DQL query for recent orders.
+readOnly: true
+---
+kind: toolsets
+name: spanner_readonly
+tools:
+  - spanner_list_tables
+  - spanner_orders_dql

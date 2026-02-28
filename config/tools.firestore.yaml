@@ -1,0 +1,16 @@
+kind: sources
+name: firestore_main
+type: firestore
+project: ${FIRESTORE_PROJECT}
+database: ${FIRESTORE_DATABASE}
+---
+kind: tools
+name: firestore_query_collection
+type: firestore-query-collection
+source: firestore_main
+description: Query documents from a Firestore collection.
+---
+kind: toolsets
+name: firestore_readonly
+tools:
+  - firestore_query_collection

@@ -1,0 +1,36 @@
+kind: sources
+name: mssql_main
+type: mssql
+host: ${MSSQL_HOST}
+port: ${MSSQL_PORT}
+database: ${MSSQL_DATABASE}
+user: ${MSSQL_USER}
+password: ${MSSQL_PASSWORD}
+encrypt: true
+---
+kind: tools
+name: mssql_list_tables
+type: mssql-list-tables
+source: mssql_main
+description: Lists tables in SQL Server.
+---
+kind: tools
+name: mssql_recent_orders
+type: mssql-sql
+source: mssql_main
+description: Read-only query for recent orders.
+readOnly: true
+statement: |
+  SELECT TOP (@p1) id, created_at, status, total_amount
+  FROM dbo.orders
+  ORDER BY created_at DESC;
+parameters:
+  - name: limit_count
+    type: integer
+    description: Number of rows to return.
+---
+kind: toolsets
+name: mssql_readonly
+tools:
+  - mssql_list_tables
+  - mssql_recent_orders

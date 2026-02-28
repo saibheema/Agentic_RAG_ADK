@@ -1,0 +1,19 @@
+kind: sources
+name: singlestore_main
+type: singlestore
+host: ${SINGLESTORE_HOST}
+port: ${SINGLESTORE_PORT}
+database: ${SINGLESTORE_DATABASE}
+user: ${SINGLESTORE_USER}
+password: ${SINGLESTORE_PASSWORD}
+---
+kind: tools
+name: singlestore_execute_sql
+type: singlestore-execute-sql
+source: singlestore_main
+description: Execute SQL in SingleStore.
+---
+kind: toolsets
+name: singlestore_readonly
+tools:
+  - singlestore_execute_sql

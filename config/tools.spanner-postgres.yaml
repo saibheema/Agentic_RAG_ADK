@@ -1,0 +1,26 @@
+kind: sources
+name: spanner_pg_main
+type: spanner
+project: ${SPANNER_PROJECT}
+instance: ${SPANNER_INSTANCE}
+database: ${SPANNER_DATABASE}
+dialect: postgresql
+---
+kind: tools
+name: spanner_pg_list_tables
+type: spanner-list-tables
+source: spanner_pg_main
+description: Lists tables in Spanner PostgreSQL dialect database.
+---
+kind: tools
+name: spanner_pg_orders_dql
+type: spanner-execute-sql
+source: spanner_pg_main
+description: Read-only DQL query for recent orders.
+readOnly: true
+---
+kind: toolsets
+name: spanner_postgres_readonly
+tools:
+  - spanner_pg_list_tables
+  - spanner_pg_orders_dql

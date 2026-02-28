@@ -1,0 +1,37 @@
+kind: sources
+name: postgres_main
+type: postgres
+host: ${PGHOST}
+port: ${PGPORT}
+database: ${PGDATABASE}
+user: ${PGUSER}
+password: ${PGPASSWORD}
+sslMode: require
+---
+kind: tools
+name: postgres_list_tables
+type: postgres-list-tables
+source: postgres_main
+description: Lists tables in the PostgreSQL database.
+---
+kind: tools
+name: postgres_recent_orders
+type: postgres-sql
+source: postgres_main
+description: Retrieve a limited set of most recent orders for reporting.
+readOnly: true
+statement: |
+  SELECT id, created_at, status, total_amount
+  FROM public.orders
+  ORDER BY created_at DESC
+  LIMIT $1;
+parameters:
+  - name: limit_count
+    type: integer
+    description: Number of rows to return, max 200.
+---
+kind: toolsets
+name: postgres_readonly
+tools:
+  - postgres_list_tables
+  - postgres_recent_orders

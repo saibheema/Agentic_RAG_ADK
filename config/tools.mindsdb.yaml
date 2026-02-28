@@ -1,0 +1,19 @@
+kind: sources
+name: mindsdb_main
+type: mindsdb
+host: ${MINDSDB_HOST}
+port: ${MINDSDB_PORT}
+database: ${MINDSDB_DATABASE}
+user: ${MINDSDB_USER}
+password: ${MINDSDB_PASSWORD}
+---
+kind: tools
+name: mindsdb_execute_sql
+type: mindsdb-execute-sql
+source: mindsdb_main
+description: Execute SQL in MindsDB.
+---
+kind: toolsets
+name: mindsdb_readonly
+tools:
+  - mindsdb_execute_sql
