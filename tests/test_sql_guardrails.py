@@ -1,13 +1,17 @@
 """Tests for Text-to-SQL guardrails in agent.py.
 
-These test the SQL validation, LIMIT injection, and normalization
+These test the SQL validation, LIMIT/TOP injection, and normalization
 logic without requiring a database connection.
+Covers both PostgreSQL and SQL Server modes.
 """
+
+import os
 
 import pytest
 
 from agentic_rag.agent import (
     _inject_limit_if_missing,
+    _is_mssql,
     _normalized_sql,
     _validate_readonly_sql,
 )
@@ -115,6 +119,21 @@ class TestValidateReadonlySql:
         assert not ok
         assert "System" in reason
 
+    def test_rejects_sys_schema(self):
+        """SQL Server sys schema should be blocked."""
+        ok, reason = _validate_readonly_sql(
+            "SELECT * FROM sys.tables", ALLOWED_TABLES
+        )
+        assert not ok
+        assert "System" in reason
+
+    def test_rejects_sys_columns(self):
+        ok, reason = _validate_readonly_sql(
+            "SELECT * FROM sys.columns WHERE object_id = 1", ALLOWED_TABLES
+        )
+        assert not ok
+        assert "sys" in reason.lower()
+
     def test_allows_date_functions(self):
         """DATE_TRUNC and other functions should not trigger false positives."""
         ok, _ = _validate_readonly_sql(
@@ -149,6 +168,8 @@ class TestValidateReadonlySql:
 
 
 class TestInjectLimit:
+    """Tests for PostgreSQL LIMIT injection (DB_TYPE=postgres)."""
+
     def test_adds_limit_when_missing(self):
         result = _inject_limit_if_missing("SELECT * FROM orders", 100)
         assert result.endswith("LIMIT 100")
@@ -168,3 +189,85 @@ class TestInjectLimit:
         sql = "SELECT * FROM orders limit 5"
         result = _inject_limit_if_missing(sql, 200)
         assert "LIMIT 200" not in result
+
+
+# ── SQL Server TOP injection ─────────────────────────────────────────────────
+
+
+class TestInjectTop:
+    """Tests for SQL Server TOP injection (DB_TYPE=mssql)."""
+
+    def setup_method(self):
+        """Switch to MSSQL mode for these tests."""
+        self._original = os.environ.get("DB_TYPE", "")
+        os.environ["DB_TYPE"] = "mssql"
+        # Reload the module-level _DB_TYPE
+        import agentic_rag.agent as _agent
+        _agent._DB_TYPE = "mssql"
+
+    def teardown_method(self):
+        """Restore original DB_TYPE."""
+        if self._original:
+            os.environ["DB_TYPE"] = self._original
+        else:
+            os.environ.pop("DB_TYPE", None)
+        import agentic_rag.agent as _agent
+        _agent._DB_TYPE = self._original or "postgres"
+
+    def test_adds_top_when_missing(self):
+        result = _inject_limit_if_missing("SELECT * FROM orders", 100)
+        assert "SELECT TOP 100 " in result
+
+    def test_preserves_existing_top(self):
+        sql = "SELECT TOP 10 * FROM orders"
+        result = _inject_limit_if_missing(sql, 200)
+        assert "TOP 200" not in result
+        assert "TOP 10" in result
+
+    def test_strips_trailing_semicolon(self):
+        result = _inject_limit_if_missing("SELECT * FROM orders;", 50)
+        assert "TOP 50" in result
+        assert result.startswith("SELECT TOP 50 ")
+
+    def test_case_insensitive_top_detection(self):
+        sql = "SELECT top 5 * FROM orders"
+        result = _inject_limit_if_missing(sql, 200)
+        assert "TOP 200" not in result
+
+    def test_with_cte(self):
+        """TOP injection should only apply to the outer SELECT, not CTE."""
+        sql = "WITH cte AS (SELECT * FROM orders) SELECT * FROM cte"
+        result = _inject_limit_if_missing(sql, 100)
+        # CTE queries — regex matches first SELECT after WITH block
+        assert "TOP 100" in result
+
+
+# ── _is_mssql detection ─────────────────────────────────────────────────────
+
+
+class TestIsMssql:
+    def _set_db_type(self, value):
+        os.environ["DB_TYPE"] = value
+        import agentic_rag.agent as _agent
+        _agent._DB_TYPE = value.strip().lower()
+
+    def teardown_method(self):
+        os.environ.pop("DB_TYPE", None)
+        import agentic_rag.agent as _agent
+        _agent._DB_TYPE = "postgres"
+
+    def test_postgres_is_not_mssql(self):
+        self._set_db_type("postgres")
+        assert not _is_mssql()
+
+    def test_mssql_detected(self):
+        self._set_db_type("mssql")
+        assert _is_mssql()
+
+    def test_sqlserver_detected(self):
+        self._set_db_type("sqlserver")
+        assert _is_mssql()
+
+    def test_sql_server_detected(self):
+        self._set_db_type("sql_server")
+        assert _is_mssql()

@@ -3,14 +3,16 @@ Multi-agent Agentic RAG — ADK entry point.
 
 Architecture (Agentic_RAG.md):
   Router Agent (supervisor)
-    ├─ Database Agent  — Text-to-SQL against PostgreSQL
+    ├─ Database Agent  — Text-to-SQL against PostgreSQL or SQL Server
     └─ RAG Agent       — Document retrieval via Vertex AI RAG Engine
 
 PII masking is applied to all database query results before they reach the LLM.
+Set DB_TYPE=postgres (default) or DB_TYPE=mssql to choose the backend database.
 """
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from decimal import Decimal
@@ -18,7 +20,16 @@ from typing import Any
 
 from google.adk.agents import LlmAgent
 from google.adk.tools import FunctionTool
-import pg8000
+
+_log = logging.getLogger(__name__)
+
+# ── Database type detection ──────────────────────────────────────────────────
+
+_DB_TYPE = os.environ.get("DB_TYPE", "postgres").strip().lower()
+
+
+def _is_mssql() -> bool:
+    return _DB_TYPE in ("mssql", "sqlserver", "sql_server")
 
 
 # ── PII masking ──────────────────────────────────────────────────────────────
@@ -97,12 +108,14 @@ def _resolve_db_password() -> str:
 
 
 def _db_config() -> dict[str, Any]:
+    default_port = 1433 if _is_mssql() else 5432
     return {
+        "db_type": _DB_TYPE,
         "user": os.environ.get("DB_USER", "app_user"),
         "password": _resolve_db_password(),
         "database": os.environ.get("DB_NAME", "agentic_rag"),
         "host": os.environ.get("DB_HOST", "127.0.0.1"),
-        "port": int(os.environ.get("DB_PORT", "5432")),
+        "port": int(os.environ.get("DB_PORT", str(default_port))),
         "instance_connection_name": os.environ.get(
             "DB_INSTANCE_CONNECTION_NAME", ""
         ),
@@ -121,8 +134,10 @@ def _db_config() -> dict[str, Any]:
     }
 
 
-def _connect():
-    cfg = _db_config()
+def _connect_postgres(cfg: dict[str, Any]):
+    """Connect to PostgreSQL via pg8000 (Cloud SQL Auth Proxy aware)."""
+    import pg8000
+
     instance = cfg["instance_connection_name"]
     if instance:
         socket_dir = f"/cloudsql/{instance}"
@@ -157,6 +172,27 @@ def _connect():
         host=cfg["host"],
         port=cfg["port"],
     )
+
+
+def _connect_mssql(cfg: dict[str, Any]):
+    """Connect to SQL Server via pymssql."""
+    import pymssql  # type: ignore[import-untyped]
+
+    return pymssql.connect(
+        server=cfg["host"],
+        user=cfg["user"],
+        password=cfg["password"],
+        database=cfg["database"],
+        port=cfg["port"],
+        login_timeout=max(5, cfg["query_timeout_ms"] // 1000),
+    )
+
+
+def _connect():
+    cfg = _db_config()
+    if _is_mssql():
+        return _connect_mssql(cfg)
+    return _connect_postgres(cfg)
 
 
 def _to_rows(cursor) -> list[dict[str, Any]]:
@@ -212,14 +248,35 @@ def _validate_readonly_sql(
     if ";" in normalized[:-1]:
         return False, "Multiple SQL statements are not allowed"
 
-    if " information_schema." in padded or " pg_catalog." in padded:
+    # Block system catalog access for both PostgreSQL and SQL Server
+    if " information_schema." in padded:
         return False, "System schemas are blocked"
+    if " pg_catalog." in padded:
+        return False, "System schemas are blocked (pg_catalog)"
+    if " sys." in padded:
+        return False, "System schemas are blocked (sys)"
 
     return True, "ok"
 
 
 def _inject_limit_if_missing(sql: str, max_rows: int) -> str:
     normalized = _normalized_sql(sql).lower()
+
+    if _is_mssql():
+        # SQL Server uses TOP N after SELECT
+        if " top " in f" {normalized} ":
+            return sql
+        sql = sql.rstrip().rstrip(";")
+        # Handle both plain SELECT and CTE (WITH ... SELECT ...)
+        # Insert TOP after the last SELECT keyword (the outer query)
+        return re.sub(
+            r"(?i)\bSELECT\b(?!.*\bSELECT\b)",
+            f"SELECT TOP {max_rows}",
+            sql,
+            count=1,
+        )
+
+    # PostgreSQL uses LIMIT
     if " limit " in f" {normalized} ":
         return sql
     sql = sql.rstrip().rstrip(";")
@@ -238,13 +295,25 @@ def get_schema_metadata() -> dict[str, Any]:
         return {"tables": []}
 
     placeholders = ", ".join(["%s"] * len(allowed_tables))
-    sql = f"""
-    SELECT table_name, column_name, data_type
-    FROM information_schema.columns
-    WHERE table_schema = 'public'
-      AND table_name IN ({placeholders})
-    ORDER BY table_name, ordinal_position
-    """
+
+    if _is_mssql():
+        # SQL Server: default schema is 'dbo', use %s placeholders (pymssql)
+        sql = f"""
+        SELECT TABLE_NAME AS table_name, COLUMN_NAME AS column_name, DATA_TYPE AS data_type
+        FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_SCHEMA = 'dbo'
+          AND TABLE_NAME IN ({placeholders})
+        ORDER BY TABLE_NAME, ORDINAL_POSITION
+        """
+    else:
+        # PostgreSQL: default schema is 'public'
+        sql = f"""
+        SELECT table_name, column_name, data_type
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name IN ({placeholders})
+        ORDER BY table_name, ordinal_position
+        """
 
     conn = _connect()
     try:
@@ -292,7 +361,11 @@ def run_readonly_sql(sql: str) -> dict[str, Any]:
     conn = _connect()
     try:
         cur = conn.cursor()
-        cur.execute(f"SET statement_timeout TO {timeout_ms}")
+        if _is_mssql():
+            # SQL Server: no SET statement_timeout; rely on login_timeout
+            pass
+        else:
+            cur.execute(f"SET statement_timeout TO {timeout_ms}")
         cur.execute(final_sql)
         rows = _to_rows(cur)
         columns = (
@@ -398,6 +471,9 @@ database_agent = LlmAgent(
         "2. Write a read-only SELECT or WITH query and call run_readonly_sql.\n"
         "3. If run_readonly_sql returns ok=false, read the error, fix the SQL, "
         "and retry.\n"
+        "The database may be PostgreSQL or SQL Server — get_schema_metadata "
+        "will tell you the column types, so write SQL compatible with the "
+        "actual backend. Use LIMIT for PostgreSQL and TOP for SQL Server.\n"
         "Never invent data — rely only on tool outputs.\n"
         "Keep final answers concise and include key numbers."
     ),

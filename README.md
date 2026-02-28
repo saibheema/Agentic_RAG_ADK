@@ -31,9 +31,12 @@ The router agent examines each question and hands it off to the right specialist
               └──────┬─────┘  └───────────────┘
                      │
               Cloud SQL PostgreSQL
+                  or SQL Server
 ```
 
-The database agent doesn't use pre-canned queries. It reads the actual schema at runtime, writes SQL on the fly, and has a bunch of guardrails to keep things safe (read-only enforcement, keyword blocklist, auto LIMIT, query timeouts, table allowlisting).
+The database agent doesn't use pre-canned queries. It reads the actual schema at runtime, writes SQL on the fly, and has a bunch of guardrails to keep things safe (read-only enforcement, keyword blocklist, auto LIMIT/TOP, query timeouts, table allowlisting).
+
+It supports both PostgreSQL (Cloud SQL) and SQL Server — just set `DB_TYPE=mssql` in your environment to switch backends. The agent adapts its SQL dialect automatically based on the schema it reads.
 
 PII masking runs on every result set before the data reaches the LLM — names, emails, SSNs get replaced with tokens like `PERSON_1`, `EMAIL_3`.
 
@@ -57,8 +60,8 @@ ui/
 └── Dockerfile         # nginx container for Cloud Run
 
 config/                # MCP Toolbox YAML templates (reference only, not used)
-scripts/               # database seeding script
-sql/                   # seed SQL
+scripts/               # database seeding scripts (PostgreSQL + SQL Server)
+sql/                   # seed SQL (PostgreSQL + SQL Server variants)
 tests/                 # guardrail + router tests
 docs/                  # architecture, deployment, planning docs
 ```
@@ -68,19 +71,22 @@ docs/                  # architecture, deployment, planning docs
 ### Prerequisites
 
 - Python 3.12+
-- A GCP project with Cloud SQL PostgreSQL set up
-- `gcloud` CLI authenticated
+- A database: either GCP Cloud SQL PostgreSQL **or** a SQL Server instance
+- `gcloud` CLI authenticated (for Cloud SQL / Cloud Run deployment)
 
 ### Local development
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
+pip install -e ".[dev]"          # PostgreSQL support included by default
+# pip install -e ".[dev,mssql]"  # add SQL Server support
 cp .env.example .env
 # fill in your DB credentials and GCP project in .env
 ```
 
 Seed the database (if starting fresh):
+
+**PostgreSQL (Cloud SQL):**
 
 ```bash
 python scripts/seed_cloudsql.py \
@@ -89,6 +95,17 @@ python scripts/seed_cloudsql.py \
   --db-password='YOUR_PASSWORD' \
   --db-name=agentic_rag \
   --sql-file=sql/min_prod_seed.sql
+```
+
+**SQL Server:**
+
+```bash
+python scripts/seed_mssql.py \
+  --db-host=your-server.database.windows.net \
+  --db-user=sa \
+  --db-password='YOUR_PASSWORD' \
+  --db-name=agentic_rag \
+  --sql-file=sql/min_prod_seed_mssql.sql
 ```
 
 Run locally:
@@ -111,7 +128,7 @@ python3 -m http.server 4173 --directory ui
 pytest -q
 ```
 
-There are 37 tests covering SQL guardrails (keyword blocking, LIMIT injection, multi-statement detection, system schema blocking) and multi-agent routing behavior.
+There are 49 tests covering SQL guardrails (keyword blocking, LIMIT/TOP injection, multi-statement detection, system schema blocking for both PG and SQL Server) and multi-agent routing behavior.
 
 ## Deploying to Cloud Run
 
@@ -290,9 +307,9 @@ Cloud Run auto-scales based on request volume. Things to keep in mind:
 |-------|-----------|
 | **SQL injection prevention** | Keyword blocklist (`DROP`, `DELETE`, `ALTER`, etc.), read-only enforcement, multi-statement blocking |
 | **Data exposure** | PII masking on all query results before they reach the LLM |
-| **Row-level limiting** | Auto-injected `LIMIT` clause prevents bulk data exfiltration |
+| **Row-level limiting** | Auto-injected `LIMIT` (PostgreSQL) or `TOP` (SQL Server) prevents bulk data exfiltration |
 | **Table access control** | `TEXT_TO_SQL_ALLOWED_TABLES` restricts which tables the agent can see |
-| **System schema blocking** | Blocks queries against `pg_catalog`, `information_schema` (except via the schema tool) |
+| **System schema blocking** | Blocks queries against `pg_catalog`, `information_schema`, `sys` (except via the schema tool) |
 | **Credential management** | DB password via Secret Manager (`DB_PASSWORD_SECRET`) — no plaintext in env vars in production |
 | **Network** | Cloud SQL uses private IP; no public database endpoint exposed |
 
@@ -313,7 +330,7 @@ Things you should add before going live with real users:
 
 | Suite | File | Tests | What it covers |
 |-------|------|-------|----------------|
-| **SQL guardrails** | `tests/test_sql_guardrails.py` | 30 | Keyword blocking, LIMIT injection, multi-statement detection, system schema access, `SELECT`-only enforcement, table allowlisting |
+| **SQL guardrails** | `tests/test_sql_guardrails.py` | 42 | Keyword blocking, LIMIT/TOP injection, multi-statement detection, system schema access (`pg_catalog` + `sys`), `SELECT`-only enforcement, table allowlisting |
 | **Router behavior** | `tests/test_router_agent.py` | 7 | Intent classification — database vs. document vs. ambiguous queries route to the right agent |
 | **Accuracy (live)** | `tests/test_accuracy.py` | 12 | End-to-end SQL generation against the deployed backend — verifies real queries return correct data |
 
@@ -372,10 +389,13 @@ Key settings:
 
 | Variable | What it controls |
 |----------|-----------------|
+| `DB_TYPE` | Database backend: `postgres` (default) or `mssql` for SQL Server |
 | `AGENT_MODEL` | Which Gemini model to use (default: `gemini-2.5-flash`) |
-| `DB_INSTANCE_CONNECTION_NAME` | Cloud SQL instance path |
+| `DB_INSTANCE_CONNECTION_NAME` | Cloud SQL instance path (PostgreSQL only) |
+| `DB_HOST` | Database hostname (required for SQL Server, optional for Cloud SQL) |
+| `DB_PORT` | Database port (auto-defaults: 5432 for PG, 1433 for MSSQL) |
 | `TEXT_TO_SQL_ALLOWED_TABLES` | Comma-separated table allowlist |
-| `TEXT_TO_SQL_MAX_ROWS` | Auto-injected LIMIT value (default: 200) |
+| `TEXT_TO_SQL_MAX_ROWS` | Auto-injected LIMIT/TOP value (default: 200) |
 | `PII_MASKING_ENABLED` | Toggle PII masking on/off |
 | `VERTEX_RAG_CORPUS` | RAG corpus path (leave empty to disable document search) |
 | `DB_PASSWORD_SECRET` | Secret Manager path for DB password (optional) |
@@ -384,8 +404,10 @@ Key settings:
 
 - **Google ADK** — agent orchestration, tool registration, session management
 - **Gemini 2.5 Flash** — LLM for intent routing, SQL generation, answer synthesis
-- **Cloud SQL PostgreSQL** — structured data store
+- **Cloud SQL PostgreSQL** — structured data store (default)
+- **SQL Server** — alternative structured data store (via `pymssql`)
 - **pg8000** — pure-Python PostgreSQL driver
+- **pymssql** — pure-Python SQL Server driver (optional)
 - **Vertex AI RAG Engine** — managed document chunking, embedding, and retrieval
 - **Pydantic Settings** — env var parsing and validation
 - **Nginx** — reverse proxy for the custom UI
