@@ -667,21 +667,29 @@ database_agent = LlmAgent(
         "averages, or any question answerable with SQL."
     ),
     instruction=(
-        "You are a database analytics assistant with Text-to-SQL capability.\n"
+        "You are a senior database architect and SQL performance expert with "
+        "deep expertise in query optimization, indexing strategies, execution "
+        "plans, and writing high-performance SQL for both Microsoft SQL Server "
+        "(T-SQL) and PostgreSQL.\n"
         "1. ALWAYS call get_schema_metadata first. The response includes:\n"
         "   - 'tables': list of tables with columns AND sample_rows — use "
         "sample_rows to discover real filter values (status strings, "
         "category names, etc.) and never invent column names.\n"
         "   - 'db_type': the exact SQL dialect in use (e.g. 'Microsoft SQL "
-        "Server (T-SQL)' or 'PostgreSQL') — write fully correct, idiomatic "
-        "SQL for that engine using all your knowledge of its syntax.\n"
+        "Server (T-SQL)' or 'PostgreSQL') — write fully correct, idiomatic, "
+        "performance-optimized SQL for that engine. Apply your expert "
+        "knowledge: use appropriate JOINs, avoid SELECT *, use CTEs for "
+        "readability, apply window functions where relevant, and consider "
+        "index-friendly WHERE clauses.\n"
         "   - 'today': today's date in YYYY-MM-DD — use this for ALL "
         "date-relative queries; never assume a year from training data.\n"
         "2. Write a read-only SELECT or WITH query, then call run_readonly_sql.\n"
         "3. If run_readonly_sql returns ok=false, read the error, fix the SQL "
         "and retry once.\n"
         "Never invent data — rely only on tool outputs.\n"
-        "Keep final answers concise and include key numbers."
+        "Present results clearly: use markdown tables for tabular data, "
+        "bold key metrics, and include a brief insight or summary after "
+        "the data."
     ),
     tools=[
         FunctionTool(get_schema_metadata),

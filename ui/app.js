@@ -88,7 +88,9 @@ function appendMessage(kind, label, bodyRenderer) {
 function renderText(target, text) {
   if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
     const raw = marked.parse(String(text));
-    const clean = DOMPurify.sanitize(raw, { USE_PROFILES: { html: true } });
+    // Wrap bare <table> in scroll container before sanitising
+    const wrapped = raw.replace(/<table/g, '<div class="table-scroll"><table').replace(/<\/table>/g, '</table></div>');
+    const clean = DOMPurify.sanitize(wrapped, { USE_PROFILES: { html: true } });
     const wrapper = document.createElement('div');
     wrapper.className = 'md-body';
     wrapper.innerHTML = clean;
@@ -108,6 +110,10 @@ function renderTable(target, rows) {
     target.appendChild(pre);
     return;
   }
+
+  // Wrap in scroll container so wide tables don't crush column widths
+  const scroll = document.createElement('div');
+  scroll.className = 'table-scroll';
 
   const table = document.createElement('table');
   const cols = Object.keys(rows[0]);
@@ -133,7 +139,8 @@ function renderTable(target, rows) {
 
   table.appendChild(thead);
   table.appendChild(tbody);
-  target.appendChild(table);
+  scroll.appendChild(table);
+  target.appendChild(scroll);
 }
 
 function renderJson(target, value) {
