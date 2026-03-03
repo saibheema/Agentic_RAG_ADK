@@ -640,7 +640,7 @@ def prewarm_schema_cache() -> None:
 
 # ── Agent definitions ────────────────────────────────────────────────────────
 
-_model = os.environ.get("AGENT_MODEL", "gemini-2.5-flash")
+_model = os.environ.get("AGENT_MODEL", "gemini-3.0-flash-preview")
 # Lightweight model for the router — it only picks between 2 sub-agents
 _router_model = os.environ.get("ROUTER_MODEL", "gemini-2.5-flash-lite")
 

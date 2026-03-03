@@ -458,7 +458,7 @@ Key settings:
 | Variable | What it controls |
 |----------|-----------------|
 | `DB_TYPE` | Database backend: `postgres` (default) or `mssql` for SQL Server |
-| `AGENT_MODEL` | Which Gemini model to use (default: `gemini-2.5-flash`) |
+| `AGENT_MODEL` | Which Gemini model to use (default: `gemini-3.0-flash-preview`) |
 | `DB_INSTANCE_CONNECTION_NAME` | Cloud SQL instance path (PostgreSQL only) |
 | `DB_HOST` | Database hostname (required for SQL Server, optional for Cloud SQL) |
 | `DB_PORT` | Database port (auto-defaults: 5432 for PG, 1433 for MSSQL) |
