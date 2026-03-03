@@ -60,6 +60,16 @@ function saveSettings() {
 function appendMessage(kind, label, bodyRenderer) {
   const node = el.msgTemplate.content.firstElementChild.cloneNode(true);
   node.classList.add(kind);
+  // data-label lets CSS style system/error/agent variants
+  node.dataset.label = label.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+  // set avatar glyph
+  const avatar = node.querySelector('.msg-avatar');
+  if (avatar) {
+    if (kind === 'user') avatar.textContent = 'U';
+    else if (label === 'Error') avatar.textContent = '⚠';
+    else if (label === 'System') avatar.textContent = 'ℹ';
+    else avatar.textContent = '✦';
+  }
   node.querySelector('.msg-meta').textContent = label;
   bodyRenderer(node.querySelector('.msg-body'));
   el.chat.appendChild(node);
@@ -560,4 +570,43 @@ el.apiBase.addEventListener('change', () => {
 
 appendMessage('agent', 'System', (target) => {
   renderText(target, 'Set API base URL, create a session, and start querying. Tool outputs are rendered from JSON.');
+});
+
+/* ── Theme Toggle ──────────────────────────────────────── */
+(function initTheme() {
+  const btn = document.getElementById('themeToggle');
+  const saved = localStorage.getItem('theme') || 'light';
+  document.documentElement.dataset.theme = saved;
+  if (btn) btn.textContent = saved === 'dark' ? '☀️' : '🌙';
+  if (btn) btn.addEventListener('click', () => {
+    const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+    document.documentElement.dataset.theme = next;
+    localStorage.setItem('theme', next);
+    btn.textContent = next === 'dark' ? '☀️' : '🌙';
+  });
+})();
+
+/* ── Settings Panel Toggle ─────────────────────────────── */
+(function initSettings() {
+  const toggleBtn = document.getElementById('settingsToggle');
+  const panel     = document.getElementById('settingsPanel');
+  if (!toggleBtn || !panel) return;
+  toggleBtn.addEventListener('click', () => {
+    panel.classList.toggle('open');
+    toggleBtn.classList.toggle('active');
+  });
+})();
+
+/* ── Textarea Auto-resize ──────────────────────────────── */
+el.prompt.addEventListener('input', function () {
+  this.style.height = 'auto';
+  this.style.height = Math.min(this.scrollHeight, 160) + 'px';
+});
+
+/* ── Enter = Send, Shift+Enter = new line ──────────────── */
+el.prompt.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    el.chatForm.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+  }
 });
