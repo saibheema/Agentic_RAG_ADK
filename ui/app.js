@@ -587,10 +587,6 @@ el.apiBase.addEventListener('change', () => {
   fetchDatabases();
 });
 
-appendMessage('agent', 'System', (target) => {
-  renderText(target, 'Set API base URL, create a session, and start querying. Tool outputs are rendered from JSON.');
-});
-
 /* ── Theme Toggle ──────────────────────────────────────── */
 (function initTheme() {
   const btn = document.getElementById('themeToggle');
