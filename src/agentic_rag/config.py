@@ -20,14 +20,16 @@ class AppSettings(BaseSettings):
     # ── Agent model ──────────────────────────────────────────
     agent_model: str = Field(default="gemini-2.5-flash", alias="AGENT_MODEL")
 
-    # ── Cloud SQL PostgreSQL ─────────────────────────────────
+    # ── Database ───────────────────────────────────────────────
+    # DB_TYPE: "postgres" (default) or "mssql" for SQL Server
+    db_type: str = Field(default="postgres", alias="DB_TYPE")
     db_instance_connection_name: str = Field(default="", alias="DB_INSTANCE_CONNECTION_NAME")
     db_name: str = Field(default="agentic_rag", alias="DB_NAME")
     db_user: str = Field(default="app_user", alias="DB_USER")
     db_password: str = Field(default="", alias="DB_PASSWORD")
     db_password_secret: str = Field(default="", alias="DB_PASSWORD_SECRET")
     db_host: str = Field(default="127.0.0.1", alias="DB_HOST")
-    db_port: int = Field(default=5432, alias="DB_PORT")
+    db_port: int = Field(default=5432, alias="DB_PORT")  # 5432 for PG, 1433 for MSSQL
 
     # ── Text-to-SQL guardrails ───────────────────────────────
     allowed_tables: str = Field(default="orders,customers,products,order_items", alias="TEXT_TO_SQL_ALLOWED_TABLES")
@@ -44,7 +46,7 @@ class AppSettings(BaseSettings):
 
     # ── Tenant config (future multi-tenant) ──────────────────
     tenant_config_use_firestore: bool = Field(default=False, alias="TENANT_CONFIG_USE_FIRESTORE")
-    tenant_default_db_type: str = Field(default="cloudsql_postgres", alias="TENANT_DEFAULT_DB_TYPE")
+    tenant_default_db_type: str = Field(default="postgres", alias="TENANT_DEFAULT_DB_TYPE")
     tenant_default_secret_name: str = Field(default="", alias="TENANT_DEFAULT_SECRET_NAME")
 
 

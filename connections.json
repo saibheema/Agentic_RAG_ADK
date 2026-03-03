@@ -1,0 +1,42 @@
+{
+  "default": "yisbeta",
+  "connections": [
+    {
+      "alias": "local_pg",
+      "label": "Cloud SQL PostgreSQL",
+      "db_type": "postgres",
+      "host": "127.0.0.1",
+      "port": 5432,
+      "database": "agentic_rag",
+      "user": "app_user",
+      "password_secret": "projects/unicon-494419/secrets/local-pg-password/versions/latest",
+      "instance_connection_name": "unicon-494419:us-central1:agentic-rag-pg",
+      "allowed_tables": ""
+    },
+    {
+      "alias": "yisbeta",
+      "label": "YIS Beta (SQL Server)",
+      "db_type": "mssql",
+      "host": "10.0.0.22",
+      "port": 1433,
+      "database": "YISBeta",
+      "user": "3vAnalysts2",
+      "password_secret": "projects/unicon-494419/secrets/yisbeta-db-password/versions/latest",
+      "instance_connection_name": "",
+      "allowed_tables": ""
+    },
+    {
+      "alias": "yisbeta_tunnel",
+      "label": "YIS Beta via Docker Tunnel (local dev)",
+      "db_type": "mssql",
+      "local_only": true,
+      "host": "127.0.0.1",
+      "port": 14333,
+      "database": "YISBeta",
+      "user": "3vAnalysts2",
+      "password_secret": "projects/unicon-494419/secrets/yisbeta-db-password/versions/latest",
+      "instance_connection_name": "",
+      "allowed_tables": ""
+    }
+  ]
+}

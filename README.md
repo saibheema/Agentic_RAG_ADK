@@ -31,9 +31,12 @@ The router agent examines each question and hands it off to the right specialist
               └──────┬─────┘  └───────────────┘
                      │
               Cloud SQL PostgreSQL
+                  or SQL Server
 ```
 
-The database agent doesn't use pre-canned queries. It reads the actual schema at runtime, writes SQL on the fly, and has a bunch of guardrails to keep things safe (read-only enforcement, keyword blocklist, auto LIMIT, query timeouts, table allowlisting).
+The database agent doesn't use pre-canned queries. It reads the actual schema at runtime, writes SQL on the fly, and has a bunch of guardrails to keep things safe (read-only enforcement, keyword blocklist, auto LIMIT/TOP, query timeouts, table allowlisting).
+
+It supports both PostgreSQL (Cloud SQL) and SQL Server — just set `DB_TYPE=mssql` in your environment to switch backends. The agent adapts its SQL dialect automatically based on the schema it reads.
 
 PII masking runs on every result set before the data reaches the LLM — names, emails, SSNs get replaced with tokens like `PERSON_1`, `EMAIL_3`.
 
@@ -57,8 +60,8 @@ ui/
 └── Dockerfile         # nginx container for Cloud Run
 
 config/                # MCP Toolbox YAML templates (reference only, not used)
-scripts/               # database seeding script
-sql/                   # seed SQL
+scripts/               # database seeding scripts (PostgreSQL + SQL Server)
+sql/                   # seed SQL (PostgreSQL + SQL Server variants)
 tests/                 # guardrail + router tests
 docs/                  # architecture, deployment, planning docs
 ```
@@ -68,19 +71,22 @@ docs/                  # architecture, deployment, planning docs
 ### Prerequisites
 
 - Python 3.12+
-- A GCP project with Cloud SQL PostgreSQL set up
-- `gcloud` CLI authenticated
+- A database: either GCP Cloud SQL PostgreSQL **or** a SQL Server instance
+- `gcloud` CLI authenticated (for Cloud SQL / Cloud Run deployment)
 
 ### Local development
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
-pip install -e ".[dev]"
+pip install -e ".[dev]"          # PostgreSQL support included by default
+# pip install -e ".[dev,mssql]"  # add SQL Server support
 cp .env.example .env
 # fill in your DB credentials and GCP project in .env
 ```
 
 Seed the database (if starting fresh):
+
+**PostgreSQL (Cloud SQL):**
 
 ```bash
 python scripts/seed_cloudsql.py \
@@ -89,6 +95,17 @@ python scripts/seed_cloudsql.py \
   --db-password='YOUR_PASSWORD' \
   --db-name=agentic_rag \
   --sql-file=sql/min_prod_seed.sql
+```
+
+**SQL Server:**
+
+```bash
+python scripts/seed_mssql.py \
+  --db-host=your-server.database.windows.net \
+  --db-user=sa \
+  --db-password='YOUR_PASSWORD' \
+  --db-name=agentic_rag \
+  --sql-file=sql/min_prod_seed_mssql.sql
 ```
 
 Run locally:
@@ -111,7 +128,74 @@ python3 -m http.server 4173 --directory ui
 pytest -q
 ```
 
-There are 37 tests covering SQL guardrails (keyword blocking, LIMIT injection, multi-statement detection, system schema blocking) and multi-agent routing behavior.
+There are 49 tests covering SQL guardrails (keyword blocking, LIMIT/TOP injection, multi-statement detection, system schema blocking for both PG and SQL Server) and multi-agent routing behavior.
+
+## Managing database connections
+
+All DB connections live in **`connections.json`** at the repo root. No code changes are needed to add, remove, or switch databases.
+
+### Switching databases in the UI
+
+The chat UI shows a **dropdown** in the controls bar populated from `GET /databases`. Pick any connection — the agent automatically reconnects and queries the selected database. The topbar badge shows the active DB label (green dot = PostgreSQL, orange dot = SQL Server / MSSQL).
+
+Switching mid-conversation creates a new agent session scoped to the new DB. Previous messages stay visible for reference.
+
+### Adding a new database connection
+
+1. **Add an entry to `connections.json`:**
+
+   ```json
+   {
+     "alias": "prod_analytics",
+     "label": "Prod Analytics (PostgreSQL)",
+     "db_type": "postgres",
+     "host": "10.0.1.50",
+     "port": 5432,
+     "database": "analytics",
+     "user": "readonly_user",
+     "password_secret": "projects/unicon-494419/secrets/prod-analytics-password/versions/latest",
+     "instance_connection_name": "",
+     "allowed_tables": ""
+   }
+   ```
+
+   | Field | Description |
+   |---|---|
+   | `alias` | Unique key used internally and in session state |
+   | `label` | Human-readable name shown in the UI dropdown |
+   | `db_type` | `postgres` or `mssql` |
+   | `allowed_tables` | Comma-separated list to restrict access, or empty to auto-discover all tables |
+   | `password_secret` | Secret Manager resource path (**recommended**) |
+   | `password_env` | Name of an env var holding the password (alternative to `password_secret`) |
+   | `password` | Plaintext fallback — local dev only, never commit |
+
+2. **Store the password in Secret Manager:**
+
+   ```bash
+   printf '%s' 'YOUR_PASSWORD' | gcloud secrets create prod-analytics-password \
+     --data-file=- --project=unicon-494419 --replication-policy=automatic
+   ```
+
+   Or use the helper script (updates `provision_secrets.py` first):
+
+   ```bash
+   python scripts/provision_secrets.py
+   ```
+
+3. **Grant the runtime service account access:**
+
+   ```bash
+   gcloud secrets add-iam-policy-binding prod-analytics-password \
+     --project=unicon-494419 \
+     --member="serviceAccount:YOUR_SA@unicon-494419.iam.gserviceaccount.com" \
+     --role="roles/secretmanager.secretAccessor"
+   ```
+
+4. **Restart the agent server** — `connections.json` is loaded at startup. The new DB will appear in the UI dropdown immediately.
+
+> **No code changes required.** The agent auto-discovers tables, routes SQL correctly for the DB type, and caches schema for 24 h — all driven by the `connections.json` entry alone.
+
+---
 
 ## Deploying to Cloud Run
 
@@ -269,7 +353,8 @@ Most of the time is spent in LLM calls, not in SQL execution or PII masking.
 |-------|---------|--------|
 | **Query timeout** | `TEXT_TO_SQL_QUERY_TIMEOUT_MS` (default: 30000) | Kills runaway queries |
 | **Row limit** | `TEXT_TO_SQL_MAX_ROWS` (default: 200) | Caps response size, reduces LLM token cost |
-| **Table allowlist** | `TEXT_TO_SQL_ALLOWED_TABLES` | Fewer tables = faster schema reads = better SQL |
+| **Table allowlist** | `TEXT_TO_SQL_ALLOWED_TABLES` | Leave empty to auto-discover all tables from the DB. Set to a comma-separated list to restrict access to specific tables only |
+| **Schema cache TTL** | `SCHEMA_CACHE_TTL_SECONDS` (default: 86400) | Caches table/column schema in-memory; eliminates a DB round-trip on every query. Set to `0` to disable. Auto-invalidates on config change or process restart |
 | **Model choice** | `AGENT_MODEL` | Flash is fast + cheap; Pro is slower but better at complex JOINs |
 | **Cold starts** | Set `--min-instances=1` on Cloud Run | Eliminates first-request penalty (~5-8s) |
 | **Concurrency** | `--concurrency` on Cloud Run (default: 80) | Lower if memory-bound |
@@ -290,9 +375,9 @@ Cloud Run auto-scales based on request volume. Things to keep in mind:
 |-------|-----------|
 | **SQL injection prevention** | Keyword blocklist (`DROP`, `DELETE`, `ALTER`, etc.), read-only enforcement, multi-statement blocking |
 | **Data exposure** | PII masking on all query results before they reach the LLM |
-| **Row-level limiting** | Auto-injected `LIMIT` clause prevents bulk data exfiltration |
+| **Row-level limiting** | Auto-injected `LIMIT` (PostgreSQL) or `TOP` (SQL Server) prevents bulk data exfiltration |
 | **Table access control** | `TEXT_TO_SQL_ALLOWED_TABLES` restricts which tables the agent can see |
-| **System schema blocking** | Blocks queries against `pg_catalog`, `information_schema` (except via the schema tool) |
+| **System schema blocking** | Blocks queries against `pg_catalog`, `information_schema`, `sys` (except via the schema tool) |
 | **Credential management** | DB password via Secret Manager (`DB_PASSWORD_SECRET`) — no plaintext in env vars in production |
 | **Network** | Cloud SQL uses private IP; no public database endpoint exposed |
 
@@ -313,7 +398,7 @@ Things you should add before going live with real users:
 
 | Suite | File | Tests | What it covers |
 |-------|------|-------|----------------|
-| **SQL guardrails** | `tests/test_sql_guardrails.py` | 30 | Keyword blocking, LIMIT injection, multi-statement detection, system schema access, `SELECT`-only enforcement, table allowlisting |
+| **SQL guardrails** | `tests/test_sql_guardrails.py` | 42 | Keyword blocking, LIMIT/TOP injection, multi-statement detection, system schema access (`pg_catalog` + `sys`), `SELECT`-only enforcement, table allowlisting |
 | **Router behavior** | `tests/test_router_agent.py` | 7 | Intent classification — database vs. document vs. ambiguous queries route to the right agent |
 | **Accuracy (live)** | `tests/test_accuracy.py` | 12 | End-to-end SQL generation against the deployed backend — verifies real queries return correct data |
 
@@ -372,10 +457,14 @@ Key settings:
 
 | Variable | What it controls |
 |----------|-----------------|
+| `DB_TYPE` | Database backend: `postgres` (default) or `mssql` for SQL Server |
 | `AGENT_MODEL` | Which Gemini model to use (default: `gemini-2.5-flash`) |
-| `DB_INSTANCE_CONNECTION_NAME` | Cloud SQL instance path |
-| `TEXT_TO_SQL_ALLOWED_TABLES` | Comma-separated table allowlist |
-| `TEXT_TO_SQL_MAX_ROWS` | Auto-injected LIMIT value (default: 200) |
+| `DB_INSTANCE_CONNECTION_NAME` | Cloud SQL instance path (PostgreSQL only) |
+| `DB_HOST` | Database hostname (required for SQL Server, optional for Cloud SQL) |
+| `DB_PORT` | Database port (auto-defaults: 5432 for PG, 1433 for MSSQL) |
+| `TEXT_TO_SQL_ALLOWED_TABLES` | Comma-separated table allowlist. **Leave empty (default) to auto-discover all user tables from the connected database** — no manual listing needed. Set to restrict access to specific tables only (e.g. `Sales,Customers,Products`) |
+| `TEXT_TO_SQL_MAX_ROWS` | Auto-injected LIMIT/TOP value (default: 200) |
+| `SCHEMA_CACHE_TTL_SECONDS` | How long (seconds) to cache table/column schema in-memory (default: `86400` = 24 h). Set to `0` to always fetch fresh from the DB. Cache key includes host, database, DB type, and allowed tables — any config change auto-invalidates it |
 | `PII_MASKING_ENABLED` | Toggle PII masking on/off |
 | `VERTEX_RAG_CORPUS` | RAG corpus path (leave empty to disable document search) |
 | `DB_PASSWORD_SECRET` | Secret Manager path for DB password (optional) |
@@ -384,8 +473,10 @@ Key settings:
 
 - **Google ADK** — agent orchestration, tool registration, session management
 - **Gemini 2.5 Flash** — LLM for intent routing, SQL generation, answer synthesis
-- **Cloud SQL PostgreSQL** — structured data store
+- **Cloud SQL PostgreSQL** — structured data store (default)
+- **SQL Server** — alternative structured data store (via `pymssql`)
 - **pg8000** — pure-Python PostgreSQL driver
+- **pymssql** — pure-Python SQL Server driver (optional)
 - **Vertex AI RAG Engine** — managed document chunking, embedding, and retrieval
 - **Pydantic Settings** — env var parsing and validation
 - **Nginx** — reverse proxy for the custom UI
