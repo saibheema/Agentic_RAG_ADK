@@ -76,10 +76,29 @@ function appendMessage(kind, label, bodyRenderer) {
   el.chat.scrollTop = el.chat.scrollHeight;
 }
 
+/* lightweight markdown → safe HTML -------------------------------- */
+(function configureMarked() {
+  if (typeof marked === 'undefined') return;
+  marked.setOptions({
+    breaks: true,       // single newline → <br>
+    gfm: true,          // GitHub-Flavored Markdown
+  });
+})();
+
 function renderText(target, text) {
-  const p = document.createElement('p');
-  p.textContent = text;
-  target.appendChild(p);
+  if (typeof marked !== 'undefined' && typeof DOMPurify !== 'undefined') {
+    const raw = marked.parse(String(text));
+    const clean = DOMPurify.sanitize(raw, { USE_PROFILES: { html: true } });
+    const wrapper = document.createElement('div');
+    wrapper.className = 'md-body';
+    wrapper.innerHTML = clean;
+    target.appendChild(wrapper);
+  } else {
+    // fallback: plain text
+    const p = document.createElement('p');
+    p.textContent = text;
+    target.appendChild(p);
+  }
 }
 
 function renderTable(target, rows) {
