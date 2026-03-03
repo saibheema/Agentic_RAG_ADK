@@ -15,11 +15,15 @@ from __future__ import annotations
 import logging
 import os
 import re
+import time
+import datetime
 from decimal import Decimal
 from typing import Any
 
 from google.adk.agents import LlmAgent
-from google.adk.tools import FunctionTool
+from google.adk.planners import BuiltInPlanner
+from google.adk.tools import FunctionTool, ToolContext
+from google.genai import types
 
 _log = logging.getLogger(__name__)
 
@@ -30,6 +34,11 @@ _DB_TYPE = os.environ.get("DB_TYPE", "postgres").strip().lower()
 
 def _is_mssql() -> bool:
     return _DB_TYPE in ("mssql", "sqlserver", "sql_server")
+
+
+def _is_mssql_type(db_type: str) -> bool:
+    """Check if a db_type string indicates SQL Server (regardless of env vars)."""
+    return db_type.strip().lower() in ("mssql", "sqlserver", "sql_server")
 
 
 # ── PII masking ──────────────────────────────────────────────────────────────
@@ -107,7 +116,42 @@ def _resolve_db_password() -> str:
     return os.environ.get("DB_PASSWORD", "")
 
 
-def _db_config() -> dict[str, Any]:
+def _db_config(alias: str = "") -> dict[str, Any]:
+    """Return connection config for the given alias.
+
+    Resolution order:
+      1. connections.json entry matching `alias` (or the default alias when
+         `alias` is empty).
+      2. Env var single-DB config (DB_HOST, DB_USER, etc.) — backward compat.
+    """
+    from agentic_rag.connections import default_alias as _conn_default
+    from agentic_rag.connections import get_connection, resolve_password
+
+    resolved = alias or _conn_default()
+    if resolved:
+        conn = get_connection(resolved)
+        if conn:
+            db_type = conn["db_type"].strip().lower()
+            default_port = 1433 if _is_mssql_type(db_type) else 5432
+            return {
+                "db_type": db_type,
+                "user": conn.get("user", ""),
+                "password": resolve_password(conn),
+                "database": conn.get("database", ""),
+                "host": conn.get("host", "127.0.0.1"),
+                "port": int(conn.get("port", default_port)),
+                "instance_connection_name": conn.get("instance_connection_name", ""),
+                "max_rows": int(os.environ.get("TEXT_TO_SQL_MAX_ROWS", "200")),
+                "query_timeout_ms": int(os.environ.get("TEXT_TO_SQL_QUERY_TIMEOUT_MS", "15000")),
+                "allowed_tables": [
+                    t.strip()
+                    for t in str(conn.get("allowed_tables", "")).split(",")
+                    if t.strip()
+                ],
+            }
+        _log.warning("DB alias %r not found in connections.json — falling back to env vars", resolved)
+
+    # ── Env var fallback (single-DB / backward compat) ───────────────────────
     default_port = 1433 if _is_mssql() else 5432
     return {
         "db_type": _DB_TYPE,
@@ -116,19 +160,12 @@ def _db_config() -> dict[str, Any]:
         "database": os.environ.get("DB_NAME", "agentic_rag"),
         "host": os.environ.get("DB_HOST", "127.0.0.1"),
         "port": int(os.environ.get("DB_PORT", str(default_port))),
-        "instance_connection_name": os.environ.get(
-            "DB_INSTANCE_CONNECTION_NAME", ""
-        ),
+        "instance_connection_name": os.environ.get("DB_INSTANCE_CONNECTION_NAME", ""),
         "max_rows": int(os.environ.get("TEXT_TO_SQL_MAX_ROWS", "200")),
-        "query_timeout_ms": int(
-            os.environ.get("TEXT_TO_SQL_QUERY_TIMEOUT_MS", "15000")
-        ),
+        "query_timeout_ms": int(os.environ.get("TEXT_TO_SQL_QUERY_TIMEOUT_MS", "15000")),
         "allowed_tables": [
             table.strip()
-            for table in os.environ.get(
-                "TEXT_TO_SQL_ALLOWED_TABLES",
-                "orders,customers,products,order_items",
-            ).split(",")
+            for table in os.environ.get("TEXT_TO_SQL_ALLOWED_TABLES", "").split(",")
             if table.strip()
         ],
     }
@@ -188,9 +225,11 @@ def _connect_mssql(cfg: dict[str, Any]):
     )
 
 
-def _connect():
-    cfg = _db_config()
-    if _is_mssql():
+def _connect(cfg: dict[str, Any] | None = None):
+    """Open a DB connection. Pass cfg explicitly for multi-DB routing."""
+    if cfg is None:
+        cfg = _db_config()
+    if _is_mssql_type(cfg["db_type"]):
         return _connect_mssql(cfg)
     return _connect_postgres(cfg)
 
@@ -203,6 +242,10 @@ def _to_rows(cursor) -> list[dict[str, Any]]:
         for value in row:
             if isinstance(value, Decimal):
                 converted.append(float(value))
+            elif isinstance(value, (datetime.datetime, datetime.date, datetime.time)):
+                converted.append(value.isoformat())
+            elif isinstance(value, (bytes, bytearray)):
+                converted.append(value.hex())
             else:
                 converted.append(value)
         out.append(dict(zip(cols, converted)))
@@ -259,10 +302,11 @@ def _validate_readonly_sql(
     return True, "ok"
 
 
-def _inject_limit_if_missing(sql: str, max_rows: int) -> str:
+def _inject_limit_if_missing(sql: str, max_rows: int, db_type: str = "") -> str:
+    actual_type = db_type or _DB_TYPE
     normalized = _normalized_sql(sql).lower()
 
-    if _is_mssql():
+    if _is_mssql_type(actual_type):
         # SQL Server uses TOP N after SELECT
         if " top " in f" {normalized} ":
             return sql
@@ -285,39 +329,102 @@ def _inject_limit_if_missing(sql: str, max_rows: int) -> str:
 
 # ── Database Agent tools ─────────────────────────────────────────────────────
 
+# Schema cache: { cache_key -> {"data": {...}, "fetched_at": float} }
+# Expires after SCHEMA_CACHE_TTL_SECONDS (default: 24 h). Set
+# SCHEMA_CACHE_TTL_SECONDS=0 in the environment to disable caching.
+_schema_cache: dict[str, dict[str, Any]] = {}
+_SCHEMA_CACHE_TTL = int(os.environ.get("SCHEMA_CACHE_TTL_SECONDS", str(24 * 3600)))
 
-def get_schema_metadata() -> dict[str, Any]:
-    """Return table/column schema metadata for allowed business tables."""
-    cfg = _db_config()
-    allowed_tables = cfg["allowed_tables"]
 
-    if not allowed_tables:
-        return {"tables": []}
+def _schema_cache_key(cfg: dict[str, Any]) -> str:
+    # "*" means auto-discover all tables (TEXT_TO_SQL_ALLOWED_TABLES not set)
+    tables = ",".join(sorted(cfg["allowed_tables"])) if cfg["allowed_tables"] else "*"
+    return f"{cfg['db_type']}|{cfg['host']}:{cfg['port']}|{cfg['database']}|{tables}"
 
-    placeholders = ", ".join(["%s"] * len(allowed_tables))
 
-    if _is_mssql():
-        # SQL Server: default schema is 'dbo', use %s placeholders (pymssql)
-        sql = f"""
-        SELECT TABLE_NAME AS table_name, COLUMN_NAME AS column_name, DATA_TYPE AS data_type
-        FROM INFORMATION_SCHEMA.COLUMNS
-        WHERE TABLE_SCHEMA = 'dbo'
-          AND TABLE_NAME IN ({placeholders})
-        ORDER BY TABLE_NAME, ORDINAL_POSITION
-        """
+def _discover_all_tables(cur, db_type: str = "") -> list[str]:
+    """Return all user table names from the connected database.
+
+    Used when TEXT_TO_SQL_ALLOWED_TABLES / connections.json allowed_tables is
+    empty — the agent discovers the full schema automatically.
+    """
+    actual_type = db_type or _DB_TYPE
+    if _is_mssql_type(actual_type):
+        cur.execute(
+            "SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES "
+            "WHERE TABLE_TYPE IN ('BASE TABLE', 'VIEW') AND TABLE_SCHEMA = 'dbo' "
+            "ORDER BY TABLE_NAME"
+        )
     else:
-        # PostgreSQL: default schema is 'public'
-        sql = f"""
-        SELECT table_name, column_name, data_type
-        FROM information_schema.columns
-        WHERE table_schema = 'public'
-          AND table_name IN ({placeholders})
-        ORDER BY table_name, ordinal_position
-        """
+        cur.execute(
+            "SELECT table_name FROM information_schema.tables "
+            "WHERE table_schema = 'public' AND table_type IN ('BASE TABLE', 'VIEW') "
+            "ORDER BY table_name"
+        )
+    return [row[0] for row in cur.fetchall()]
+
+
+def get_schema_metadata(tool_context: ToolContext) -> dict[str, Any]:
+    """Return table/column schema metadata for the active database.
+
+    The active database is determined by the session's db_alias state key,
+    set when the session was created from the UI DB selector.
+    When TEXT_TO_SQL_ALLOWED_TABLES / connections.json allowed_tables is set,
+    only those tables are included. When empty, ALL tables are auto-discovered.
+
+    Results are cached in-process for SCHEMA_CACHE_TTL_SECONDS (default 24 h)
+    to avoid a DB round-trip on every agent invocation.
+    """
+    db_alias = tool_context.state.get("db_alias", "")
+    cfg = _db_config(db_alias)
+    allowed_tables = cfg["allowed_tables"]  # empty list = auto-discover
+
+    # ── Cache check ──────────────────────────────────────────────────────────
+    cache_key = _schema_cache_key(cfg)
+    if _SCHEMA_CACHE_TTL > 0:
+        entry = _schema_cache.get(cache_key)
+        if entry and (time.time() - entry["fetched_at"]) < _SCHEMA_CACHE_TTL:
+            age_h = (time.time() - entry["fetched_at"]) / 3600
+            _log.debug("Schema cache hit (age %.1fh, TTL %dh)", age_h, _SCHEMA_CACHE_TTL // 3600)
+            return entry["data"]  # type: ignore[return-value]
 
     conn = _connect()
     try:
         cur = conn.cursor()
+
+        # ── Auto-discover tables when none are configured ─────────────────
+        if not allowed_tables:
+            allowed_tables = _discover_all_tables(cur, cfg["db_type"])
+            _log.info(
+                "Auto-discovered %d tables from %s [%s]",
+                len(allowed_tables),
+                cfg["database"],
+                db_alias or "env-config",
+            )
+            if not allowed_tables:
+                return {"tables": [], "note": "No user tables found in database"}
+
+        placeholders = ", ".join(["%s"] * len(allowed_tables))
+
+        if _is_mssql_type(cfg["db_type"]):
+            # SQL Server: default schema is 'dbo', use %s placeholders (pymssql)
+            sql = f"""
+            SELECT TABLE_NAME AS table_name, COLUMN_NAME AS column_name, DATA_TYPE AS data_type
+            FROM INFORMATION_SCHEMA.COLUMNS
+            WHERE TABLE_SCHEMA = 'dbo'
+              AND TABLE_NAME IN ({placeholders})
+            ORDER BY TABLE_NAME, ORDINAL_POSITION
+            """
+        else:
+            # PostgreSQL: default schema is 'public'
+            sql = f"""
+            SELECT table_name, column_name, data_type
+            FROM information_schema.columns
+            WHERE table_schema = 'public'
+              AND table_name IN ({placeholders})
+            ORDER BY table_name, ordinal_position
+            """
+
         cur.execute(sql, tuple(allowed_tables))
         rows = _to_rows(cur)
 
@@ -331,19 +438,70 @@ def get_schema_metadata() -> dict[str, Any]:
                 }
             )
 
-        return {
-            "tables": [
-                {"table": table_name, "columns": columns}
-                for table_name, columns in tables.items()
-            ]
+        # ── Sample rows per table — single batched UNION ALL per table ────────────
+        # Fetch 2 sample rows per table in one round-trip using UNION ALL.
+        samples: dict[str, list[dict[str, Any]]] = {tname: [] for tname in tables}
+        for tname in list(tables.keys()):
+            try:
+                if _is_mssql_type(cfg["db_type"]):
+                    cur.execute(
+                        f"SELECT TOP 2 * FROM [dbo].[{tname}] WITH (NOLOCK)"
+                    )
+                else:
+                    cur.execute(f'SELECT * FROM "{tname}" LIMIT 2')
+                samples[tname] = _to_rows(cur)
+            except Exception:
+                samples[tname] = []
+
+        # Human-readable dialect label so the LLM activates its full syntax
+        # knowledge rather than pattern-matching on our internal code names.
+        _DIALECT_LABEL = {
+            "mssql": "Microsoft SQL Server (T-SQL)",
+            "sqlserver": "Microsoft SQL Server (T-SQL)",
+            "sql_server": "Microsoft SQL Server (T-SQL)",
+            "postgres": "PostgreSQL",
+            "postgresql": "PostgreSQL",
         }
+        sql_dialect = _DIALECT_LABEL.get(cfg["db_type"].lower(), cfg["db_type"])
+
+        result: dict[str, Any] = {
+            "tables": [
+                {
+                    "table": table_name,
+                    "columns": columns,
+                    "sample_rows": samples.get(table_name, []),
+                }
+                for table_name, columns in tables.items()
+            ],
+            "active_db": db_alias or "env-config",
+            "db_type": sql_dialect,
+            "today": datetime.date.today().isoformat(),
+        }
+
+        # ── Populate cache ───────────────────────────────────────────────────
+        if _SCHEMA_CACHE_TTL > 0:
+            _schema_cache[cache_key] = {"data": result, "fetched_at": time.time()}
+            _log.debug(
+                "Schema cached for %s [%s] (%d tables, TTL %dh)",
+                cfg["database"],
+                db_alias or "env-config",
+                len(result["tables"]),
+                _SCHEMA_CACHE_TTL // 3600,
+            )
+
+        return result
     finally:
         conn.close()
 
 
-def run_readonly_sql(sql: str) -> dict[str, Any]:
-    """Execute LLM-generated read-only SQL against allowed tables with guardrails."""
-    cfg = _db_config()
+def run_readonly_sql(sql: str, tool_context: ToolContext) -> dict[str, Any]:
+    """Execute LLM-generated read-only SQL against the active database.
+
+    The active database is determined by the session's db_alias state key.
+    Only SELECT/WITH queries are allowed; all writes are blocked.
+    """
+    db_alias = tool_context.state.get("db_alias", "")
+    cfg = _db_config(db_alias)
     allowed_tables = cfg["allowed_tables"]
     max_rows = max(1, cfg["max_rows"])
     timeout_ms = max(1000, cfg["query_timeout_ms"])
@@ -356,12 +514,12 @@ def run_readonly_sql(sql: str) -> dict[str, Any]:
             "allowed_tables": allowed_tables,
         }
 
-    final_sql = _inject_limit_if_missing(sql, max_rows)
+    final_sql = _inject_limit_if_missing(sql, max_rows, cfg["db_type"])
 
-    conn = _connect()
+    conn = _connect(cfg)
     try:
         cur = conn.cursor()
-        if _is_mssql():
+        if _is_mssql_type(cfg["db_type"]):
             # SQL Server: no SET statement_timeout; rely on login_timeout
             pass
         else:
@@ -377,6 +535,7 @@ def run_readonly_sql(sql: str) -> dict[str, Any]:
 
         return {
             "ok": True,
+            "active_db": db_alias or "env-config",
             "sql_executed": _normalized_sql(final_sql),
             "row_count": len(rows),
             "columns": columns,
@@ -453,13 +612,55 @@ def retrieve_documents(query: str) -> dict[str, Any]:
         return {"ok": False, "error": str(exc), "query": query}
 
 
+def prewarm_schema_cache() -> None:
+    """Pre-warm the schema cache for all configured connections.
+
+    Call this once at server startup (e.g. in a background thread) so the
+    first user query hits cache instead of triggering a cold DB round-trip.
+    """
+    try:
+        from agentic_rag.connections import list_connections
+        aliases = [c["alias"] for c in list_connections()]
+    except Exception:
+        aliases = [""]
+
+    class _FakeCtx:
+        """Minimal stand-in for ToolContext used only for cache prewarm."""
+        def __init__(self, alias: str) -> None:
+            self.state = {"db_alias": alias}
+
+    for alias in aliases:
+        try:
+            _log.info("Prewarming schema cache for alias=%r", alias)
+            get_schema_metadata(_FakeCtx(alias))  # type: ignore[arg-type]
+            _log.info("Schema cache warm for alias=%r", alias)
+        except Exception as exc:
+            _log.warning("Schema prewarm failed for alias=%r: %s", alias, exc)
+
+
 # ── Agent definitions ────────────────────────────────────────────────────────
 
 _model = os.environ.get("AGENT_MODEL", "gemini-2.5-flash")
+# Lightweight model for the router — it only picks between 2 sub-agents
+_router_model = os.environ.get("ROUTER_MODEL", "gemini-2.5-flash-lite")
+
+# Disable extended thinking on all agents: saves 5-15s per LLM call.
+# Cap output tokens to reduce generation time (SQL answers rarely exceed 1k).
+_no_think = BuiltInPlanner(
+    thinking_config=types.ThinkingConfig(thinking_budget=0)
+)
+_fast_config = types.GenerateContentConfig(
+    max_output_tokens=2048,
+)
+_router_config = types.GenerateContentConfig(
+    max_output_tokens=256,  # router only writes a delegation decision
+)
 
 database_agent = LlmAgent(
     name="database_agent",
     model=_model,
+    planner=_no_think,
+    generate_content_config=_fast_config,
     description=(
         "Specialist for structured data questions. Handles anything about "
         "orders, customers, products, sales, counts, totals, rankings, "
@@ -467,13 +668,18 @@ database_agent = LlmAgent(
     ),
     instruction=(
         "You are a database analytics assistant with Text-to-SQL capability.\n"
-        "1. Call get_schema_metadata to discover available tables and columns.\n"
-        "2. Write a read-only SELECT or WITH query and call run_readonly_sql.\n"
-        "3. If run_readonly_sql returns ok=false, read the error, fix the SQL, "
-        "and retry.\n"
-        "The database may be PostgreSQL or SQL Server — get_schema_metadata "
-        "will tell you the column types, so write SQL compatible with the "
-        "actual backend. Use LIMIT for PostgreSQL and TOP for SQL Server.\n"
+        "1. ALWAYS call get_schema_metadata first. The response includes:\n"
+        "   - 'tables': list of tables with columns AND sample_rows — use "
+        "sample_rows to discover real filter values (status strings, "
+        "category names, etc.) and never invent column names.\n"
+        "   - 'db_type': the exact SQL dialect in use (e.g. 'Microsoft SQL "
+        "Server (T-SQL)' or 'PostgreSQL') — write fully correct, idiomatic "
+        "SQL for that engine using all your knowledge of its syntax.\n"
+        "   - 'today': today's date in YYYY-MM-DD — use this for ALL "
+        "date-relative queries; never assume a year from training data.\n"
+        "2. Write a read-only SELECT or WITH query, then call run_readonly_sql.\n"
+        "3. If run_readonly_sql returns ok=false, read the error, fix the SQL "
+        "and retry once.\n"
         "Never invent data — rely only on tool outputs.\n"
         "Keep final answers concise and include key numbers."
     ),
@@ -486,6 +692,8 @@ database_agent = LlmAgent(
 rag_agent = LlmAgent(
     name="rag_agent",
     model=_model,
+    planner=_no_think,
+    generate_content_config=_fast_config,
     description=(
         "Specialist for document and policy questions. Handles anything about "
         "policies, contracts, handbooks, guidelines, procedures, or any "
@@ -510,7 +718,9 @@ rag_agent = LlmAgent(
 
 root_agent = LlmAgent(
     name="agentic_rag_router",
-    model=_model,
+    model=_router_model,
+    planner=_no_think,
+    generate_content_config=_router_config,
     description="Multi-agent router for Agentic RAG system",
     instruction=(
         "You are a smart routing agent. Analyze the user's question and "

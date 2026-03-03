@@ -9,8 +9,19 @@
   <body>
     <main class="layout">
       <header class="topbar">
-        <h1>Agentic RAG Chat</h1>
-        <p>Custom JSON-rendered UI on top of ADK API</p>
+        <div class="topbar-left">
+          <h1>Agentic RAG Chat</h1>
+          <p>Custom JSON-rendered UI on top of ADK API</p>
+        </div>
+        <div class="topbar-right">
+          <div class="topbar-db">
+            <label class="topbar-db-label" for="dbAlias">Active DB</label>
+            <select id="dbAlias" class="topbar-db-select">
+              <option value="">Loading…</option>
+            </select>
+            <div id="dbBadge" class="db-badge" style="display:none"></div>
+          </div>
+        </div>
       </header>
 
       <section class="controls card">

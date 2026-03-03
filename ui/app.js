@@ -1,8 +1,9 @@
 const state = {
-  apiBase: localStorage.getItem('apiBase') || '/api',
+  apiBase: localStorage.getItem('apiBase') || '',  // empty = same-origin (works when served by run_local.py)
   appName: localStorage.getItem('appName') || 'agentic_rag',
   userId: localStorage.getItem('userId') || 'web-user',
   sessionId: '',
+  dbAlias: localStorage.getItem('dbAlias') || '',
 };
 
 const el = {
@@ -10,6 +11,8 @@ const el = {
   appName: document.getElementById('appName'),
   userId: document.getElementById('userId'),
   sessionId: document.getElementById('sessionId'),
+  dbAlias: document.getElementById('dbAlias'),
+  dbBadge: document.getElementById('dbBadge'),
   chat: document.getElementById('chat'),
   prompt: document.getElementById('prompt'),
   chatForm: document.getElementById('chatForm'),
@@ -24,15 +27,34 @@ function syncInputs() {
   el.appName.value = state.appName;
   el.userId.value = state.userId;
   el.sessionId.value = state.sessionId;
+  if (el.dbAlias && state.dbAlias) el.dbAlias.value = state.dbAlias;
+  updateDbBadge();
+}
+
+function updateDbBadge() {
+  if (!el.dbBadge) return;
+  const selected = el.dbAlias ? el.dbAlias.options[el.dbAlias.selectedIndex] : null;
+  const dbtype = selected && selected.value ? (selected.dataset.dbtype || '') : '';
+
+  // Hide the old text badge — the topbar select is the primary indicator
+  el.dbBadge.style.display = 'none';
+
+  // Color-code the topbar-db container via data attribute
+  const dbContainer = el.dbAlias ? el.dbAlias.closest('.topbar-db') : null;
+  if (dbContainer) {
+    dbContainer.dataset.dbtype = dbtype;
+  }
 }
 
 function saveSettings() {
   state.apiBase = el.apiBase.value.trim().replace(/\/$/, '');
   state.appName = el.appName.value.trim();
   state.userId = el.userId.value.trim();
+  state.dbAlias = el.dbAlias ? el.dbAlias.value : state.dbAlias;
   localStorage.setItem('apiBase', state.apiBase);
   localStorage.setItem('appName', state.appName);
   localStorage.setItem('userId', state.userId);
+  localStorage.setItem('dbAlias', state.dbAlias);
 }
 
 function appendMessage(kind, label, bodyRenderer) {
@@ -132,13 +154,54 @@ function renderJson(target, value) {
   target.appendChild(p);
 }
 
+function isLocalOrigin() {
+  const base = (el.apiBase.value.trim() || state.apiBase || window.location.origin);
+  return base.includes('localhost') || base.includes('127.0.0.1');
+}
+
+async function fetchDatabases() {
+  try {
+    const base = (el.apiBase.value.trim() || state.apiBase || '').replace(/\/$/, '');
+    const url = base ? `${base}/databases` : '/databases';
+    const res = await fetch(url);
+    if (!res.ok) return;
+    const data = await res.json();
+    const allConnections = data.connections || [];
+    const defaultAlias = data.default || '';
+
+    if (!el.dbAlias || allConnections.length === 0) return;
+
+    // Filter out local-only connections when accessing from a remote URL
+    const local = isLocalOrigin();
+    const connections = allConnections.filter((c) => local || !c.local_only);
+
+    el.dbAlias.innerHTML = '';
+    connections.forEach((c) => {
+      const opt = document.createElement('option');
+      opt.value = c.alias;
+      opt.textContent = c.label + (c.local_only ? ' (local only)' : '');
+      opt.dataset.dbtype = c.db_type;
+      opt.disabled = !local && !!c.local_only;
+      if (c.alias === (state.dbAlias || defaultAlias)) opt.selected = true;
+      el.dbAlias.appendChild(opt);
+    });
+
+    // Persist the resolved alias
+    state.dbAlias = el.dbAlias.value;
+    localStorage.setItem('dbAlias', state.dbAlias);
+    updateDbBadge();
+  } catch {
+    // Server not up yet or no /databases endpoint — leave selector as-is
+  }
+}
+
 async function createSession() {
   saveSettings();
   const url = `${state.apiBase}/apps/${encodeURIComponent(state.appName)}/users/${encodeURIComponent(state.userId)}/sessions`;
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: '{}',
+    body: JSON.stringify(state.dbAlias ? { state: { db_alias: state.dbAlias } } : {}),
   });
 
   if (!res.ok) {
@@ -324,13 +387,31 @@ function renderTracePanel(steps) {
 
 function renderRunEvents(events) {
   const steps = buildTraceSteps(events);
+  console.log('[renderRunEvents] steps:', steps.map(s => ({ type: s.type, author: s.author, text: s.text?.slice(0, 80) })));
 
   // find the final text answer
   const lastText = [...steps].reverse().find((s) => s.type === 'text');
+  console.log('[renderRunEvents] lastText:', lastText);
 
   // render main answer
   if (lastText) {
     appendMessage('agent', 'Assistant', (target) => renderText(target, lastText.text));
+  } else if (steps.length === 0) {
+    appendMessage('agent', 'Assistant', (target) => renderText(target, '(No response)'));
+  } else {
+    // No text step — show last response data directly as the answer
+    const lastResp = [...steps].reverse().find((s) => s.type === 'response');
+    if (lastResp?.data) {
+      const d = lastResp.data;
+      const summary = d.ok === false
+        ? `Error: ${d.error || JSON.stringify(d)}`
+        : d.rows
+          ? `Query returned ${d.row_count ?? d.rows.length} row(s)`
+          : JSON.stringify(d).slice(0, 200);
+      appendMessage('agent', 'Assistant', (target) => renderText(target, summary));
+    } else {
+      appendMessage('agent', 'Assistant', (target) => renderText(target, '(Agent did not return a text response)'));
+    }
   }
 
   // render tool result data tables inline (for the last tool response before the final answer)
@@ -382,6 +463,10 @@ async function runPrompt(promptText) {
   }
 
   const events = await res.json();
+  console.log('[runPrompt] raw events:', JSON.stringify(events, null, 2));
+  if (!Array.isArray(events)) {
+    throw new Error(`Unexpected /run response (not an array): ${JSON.stringify(events).slice(0, 200)}`);
+  }
   renderRunEvents(events);
 }
 
@@ -429,7 +514,50 @@ el.clearChatBtn.addEventListener('click', () => {
   el.chat.innerHTML = '';
 });
 
+// Re-create session when user switches DB so the new alias is in session state
+if (el.dbAlias) {
+  el.dbAlias.addEventListener('change', async () => {
+    state.dbAlias = el.dbAlias.value;
+    localStorage.setItem('dbAlias', state.dbAlias);
+    state.sessionId = '';
+    const selected = el.dbAlias.options[el.dbAlias.selectedIndex];
+    const dbLabel = selected ? selected.textContent : state.dbAlias;
+
+    // Visual feedback — mark the select as switching
+    el.dbAlias.classList.add('db-switching');
+    updateDbBadge();
+
+    appendMessage('agent', 'System', (target) => {
+      renderText(target, `⏳ Switching to "${dbLabel}" — creating new session…`);
+    });
+
+    try {
+      setBusy(true);
+      await createSession();
+      appendMessage('agent', 'System', (target) => {
+        renderText(target, `✅ Now querying "${dbLabel}" (session: ${state.sessionId})`);
+      });
+    } catch (err) {
+      appendMessage('agent', 'Error', (target) => {
+        renderText(target, err instanceof Error ? err.message : String(err));
+      });
+    } finally {
+      el.dbAlias.classList.remove('db-switching');
+      setBusy(false);
+    }
+  });
+}
+
 syncInputs();
+fetchDatabases();
+
+// Re-fetch DB list when API base URL is changed
+el.apiBase.addEventListener('change', () => {
+  state.apiBase = el.apiBase.value.trim() || state.apiBase;
+  localStorage.setItem('apiBase', state.apiBase);
+  fetchDatabases();
+});
+
 appendMessage('agent', 'System', (target) => {
   renderText(target, 'Set API base URL, create a session, and start querying. Tool outputs are rendered from JSON.');
 });

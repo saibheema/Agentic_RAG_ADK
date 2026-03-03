@@ -1,0 +1,67 @@
+#!/bin/bash
+# ==============================================================================
+# run_vpn_tunnel.sh.example — Template for local IKEv2 VPN tunnel
+#
+# USAGE:
+#   cp run_vpn_tunnel.sh.example run_vpn_tunnel.sh
+#   # Fill in your credentials below, then:
+#   bash run_vpn_tunnel.sh
+#
+# ⚠️  run_vpn_tunnel.sh is GITIGNORED — never commit the file with real creds.
+#
+# After this runs, your local SQL Server connection is:
+#   localhost:14333  (forwards → <TARGET_HOST>:<TARGET_PORT> over VPN)
+#
+# Use alias: yisbeta_tunnel in connections.json for local dev.
+# Protocol: IKEv2, AES-256-GCM, SHA-512, DH Group 20 (strongSwan)
+# ==============================================================================
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+IMAGE_NAME="youngsinc-vpn-tunnel"
+CONTAINER_NAME="youngsinc-tunnel"
+
+# ── VPN credentials — FILL THESE IN ─────────────────────────────────────────
+VPN_SERVER="<vpn-server-hostname-or-ip>"
+VPN_PSK='<your-pre-shared-key>'
+TARGET_HOST="<internal-sql-server-ip>"   # e.g. 10.0.0.22
+TARGET_PORT="1433"
+LOCAL_PORT="14333"   # localhost:14333 → container → TARGET_HOST:TARGET_PORT
+
+# ── Stop any existing container ───────────────────────────────────────────────
+if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+    echo "==> Stopping existing container ${CONTAINER_NAME}..."
+    docker rm -f "${CONTAINER_NAME}" >/dev/null
+fi
+
+# ── Build image ───────────────────────────────────────────────────────────────
+echo "==> Building VPN tunnel image..."
+docker build -t "${IMAGE_NAME}" "${SCRIPT_DIR}"
+
+# ── Run container ─────────────────────────────────────────────────────────────
+echo "==> Starting tunnel (localhost:${LOCAL_PORT} → ${TARGET_HOST}:${TARGET_PORT})..."
+docker run -d \
+    --name "${CONTAINER_NAME}" \
+    --privileged \
+    --cap-add NET_ADMIN \
+    --cap-add SYS_MODULE \
+    -p "${LOCAL_PORT}:1433" \
+    -e VPN_SERVER="${VPN_SERVER}" \
+    -e VPN_PSK="${VPN_PSK}" \
+    -e TARGET_HOST="${TARGET_HOST}" \
+    -e TARGET_PORT="${TARGET_PORT}" \
+    "${IMAGE_NAME}"
+
+echo ""
+echo "==> Container started. Waiting 20s for IKEv2 negotiation..."
+sleep 20
+docker logs "${CONTAINER_NAME}" 2>&1 | tail -20
+
+# ── Verify port is open ───────────────────────────────────────────────────────
+if nc -z 127.0.0.1 "${LOCAL_PORT}" 2>/dev/null; then
+    echo ""
+    echo "✅ VPN tunnel is UP — SQL Server reachable at localhost:${LOCAL_PORT}"
+else
+    echo ""
+    echo "⚠️  Port not responding yet — check: docker logs ${CONTAINER_NAME}"
+fi

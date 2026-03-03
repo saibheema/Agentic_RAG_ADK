@@ -130,6 +130,73 @@ pytest -q
 
 There are 49 tests covering SQL guardrails (keyword blocking, LIMIT/TOP injection, multi-statement detection, system schema blocking for both PG and SQL Server) and multi-agent routing behavior.
 
+## Managing database connections
+
+All DB connections live in **`connections.json`** at the repo root. No code changes are needed to add, remove, or switch databases.
+
+### Switching databases in the UI
+
+The chat UI shows a **dropdown** in the controls bar populated from `GET /databases`. Pick any connection — the agent automatically reconnects and queries the selected database. The topbar badge shows the active DB label (green dot = PostgreSQL, orange dot = SQL Server / MSSQL).
+
+Switching mid-conversation creates a new agent session scoped to the new DB. Previous messages stay visible for reference.
+
+### Adding a new database connection
+
+1. **Add an entry to `connections.json`:**
+
+   ```json
+   {
+     "alias": "prod_analytics",
+     "label": "Prod Analytics (PostgreSQL)",
+     "db_type": "postgres",
+     "host": "10.0.1.50",
+     "port": 5432,
+     "database": "analytics",
+     "user": "readonly_user",
+     "password_secret": "projects/unicon-494419/secrets/prod-analytics-password/versions/latest",
+     "instance_connection_name": "",
+     "allowed_tables": ""
+   }
+   ```
+
+   | Field | Description |
+   |---|---|
+   | `alias` | Unique key used internally and in session state |
+   | `label` | Human-readable name shown in the UI dropdown |
+   | `db_type` | `postgres` or `mssql` |
+   | `allowed_tables` | Comma-separated list to restrict access, or empty to auto-discover all tables |
+   | `password_secret` | Secret Manager resource path (**recommended**) |
+   | `password_env` | Name of an env var holding the password (alternative to `password_secret`) |
+   | `password` | Plaintext fallback — local dev only, never commit |
+
+2. **Store the password in Secret Manager:**
+
+   ```bash
+   printf '%s' 'YOUR_PASSWORD' | gcloud secrets create prod-analytics-password \
+     --data-file=- --project=unicon-494419 --replication-policy=automatic
+   ```
+
+   Or use the helper script (updates `provision_secrets.py` first):
+
+   ```bash
+   python scripts/provision_secrets.py
+   ```
+
+3. **Grant the runtime service account access:**
+
+   ```bash
+   gcloud secrets add-iam-policy-binding prod-analytics-password \
+     --project=unicon-494419 \
+     --member="serviceAccount:YOUR_SA@unicon-494419.iam.gserviceaccount.com" \
+     --role="roles/secretmanager.secretAccessor"
+   ```
+
+4. **Restart the agent server** — `connections.json` is loaded at startup. The new DB will appear in the UI dropdown immediately.
+
+> **No code changes required.** The agent auto-discovers tables, routes SQL correctly for the DB type, and caches schema for 24 h — all driven by the `connections.json` entry alone.
+
+---
+
 ## Deploying to Cloud Run
 
 ### Backend
@@ -286,7 +353,8 @@ Most of the time is spent in LLM calls, not in SQL execution or PII masking.
 |-------|---------|--------|
 | **Query timeout** | `TEXT_TO_SQL_QUERY_TIMEOUT_MS` (default: 30000) | Kills runaway queries |
 | **Row limit** | `TEXT_TO_SQL_MAX_ROWS` (default: 200) | Caps response size, reduces LLM token cost |
-| **Table allowlist** | `TEXT_TO_SQL_ALLOWED_TABLES` | Fewer tables = faster schema reads = better SQL |
+| **Table allowlist** | `TEXT_TO_SQL_ALLOWED_TABLES` | Leave empty to auto-discover all tables from the DB. Set to a comma-separated list to restrict access to specific tables only |
+| **Schema cache TTL** | `SCHEMA_CACHE_TTL_SECONDS` (default: 86400) | Caches table/column schema in-memory; eliminates a DB round-trip on every query. Set to `0` to disable. Auto-invalidates on config change or process restart |
 | **Model choice** | `AGENT_MODEL` | Flash is fast + cheap; Pro is slower but better at complex JOINs |
 | **Cold starts** | Set `--min-instances=1` on Cloud Run | Eliminates first-request penalty (~5-8s) |
 | **Concurrency** | `--concurrency` on Cloud Run (default: 80) | Lower if memory-bound |
@@ -394,8 +462,9 @@ Key settings:
 | `DB_INSTANCE_CONNECTION_NAME` | Cloud SQL instance path (PostgreSQL only) |
 | `DB_HOST` | Database hostname (required for SQL Server, optional for Cloud SQL) |
 | `DB_PORT` | Database port (auto-defaults: 5432 for PG, 1433 for MSSQL) |
-| `TEXT_TO_SQL_ALLOWED_TABLES` | Comma-separated table allowlist |
+| `TEXT_TO_SQL_ALLOWED_TABLES` | Comma-separated table allowlist. **Leave empty (default) to auto-discover all user tables from the connected database** — no manual listing needed. Set to restrict access to specific tables only (e.g. `Sales,Customers,Products`) |
 | `TEXT_TO_SQL_MAX_ROWS` | Auto-injected LIMIT/TOP value (default: 200) |
+| `SCHEMA_CACHE_TTL_SECONDS` | How long (seconds) to cache table/column schema in-memory (default: `86400` = 24 h). Set to `0` to always fetch fresh from the DB. Cache key includes host, database, DB type, and allowed tables — any config change auto-invalidates it |
 | `PII_MASKING_ENABLED` | Toggle PII masking on/off |
 | `VERTEX_RAG_CORPUS` | RAG corpus path (leave empty to disable document search) |
 | `DB_PASSWORD_SECRET` | Secret Manager path for DB password (optional) |

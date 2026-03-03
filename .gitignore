@@ -18,8 +18,23 @@ ENV/
 *.swp
 *.swo
 
-# Environment
+# Environment / secrets  (.env itself stays gitignored; connections.json is safe to commit)
 .env
+
+# VPN scripts contain credentials — local use only
+scripts/vpn_setup.sh
+scripts/vpn_install.sh
+scripts/vpn_connect.sh
+scripts/vpn_disconnect.sh
+scripts/vpn_strongswan_setup.sh
+scripts/vpn_strongswan_connect.sh
+scripts/vpn_strongswan_disconnect.sh
+
+# Docker VPN tunnel — run script contains credentials
+scripts/docker_vpn/run_vpn_tunnel.sh
+
+# Temporary local test scripts
+test_run.py
 
 # Node (google-mcp)
 node_modules/

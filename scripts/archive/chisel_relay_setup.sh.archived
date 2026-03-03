@@ -1,0 +1,89 @@
+#!/bin/bash
+# =============================================================================
+# setup_chisel_relay.sh
+# Creates a GCP e2-micro VM that acts as the chisel relay server
+# Cloud Run → this VM → client's tunnel → 10.0.0.22:1433
+# =============================================================================
+set -euo pipefail
+
+PROJECT="unicon-494419"
+ZONE="us-central1-a"
+REGION="us-central1"
+VM_NAME="chisel-relay"
+MACHINE_TYPE="e2-micro"   # ~$7/month, free tier eligible
+
+echo "==> Creating chisel relay VM in $PROJECT..."
+
+# Create the VM with a startup script that installs chisel server
+gcloud compute instances create "$VM_NAME" \
+  --project="$PROJECT" \
+  --zone="$ZONE" \
+  --machine-type="$MACHINE_TYPE" \
+  --image-family=debian-12 \
+  --image-project=debian-cloud \
+  --tags=chisel-relay \
+  --metadata=startup-script='#!/bin/bash
+    apt-get update -q
+    curl -Lo /tmp/chisel.gz https://github.com/jpillora/chisel/releases/latest/download/chisel_1.10.1_linux_amd64.gz
+    gunzip /tmp/chisel.gz
+    chmod +x /tmp/chisel
+    mv /tmp/chisel /usr/local/bin/chisel
+
+    # Create chisel server as a systemd service (reverse tunnel mode)
+    cat > /etc/systemd/system/chisel-server.service <<EOF
+[Unit]
+Description=Chisel Relay Server
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/chisel server --port 9090 --reverse --socks5
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    systemctl daemon-reload
+    systemctl enable chisel-server
+    systemctl start chisel-server
+    echo "chisel-server started" >> /var/log/chisel-setup.log
+  '
+
+echo "==> Opening firewall for chisel port 9090..."
+gcloud compute firewall-rules create allow-chisel \
+  --project="$PROJECT" \
+  --direction=INGRESS \
+  --action=ALLOW \
+  --rules=tcp:9090 \
+  --target-tags=chisel-relay \
+  --description="Allow chisel reverse tunnel from client" \
+  2>/dev/null || echo "Firewall rule already exists, skipping."
+
+echo "==> Getting external IP..."
+sleep 10   # wait for IP assignment
+EXTERNAL_IP=$(gcloud compute instances describe "$VM_NAME" \
+  --project="$PROJECT" \
+  --zone="$ZONE" \
+  --format="get(networkInterfaces[0].accessConfigs[0].natIP)")
+
+echo ""
+echo "============================================================"
+echo "  Relay VM ready!"
+echo "  External IP: $EXTERNAL_IP"
+echo "  Send to client: replace CLOUD_IP with $EXTERNAL_IP"
+echo "  in docs/client-network-setup.md"
+echo "============================================================"
+echo ""
+echo "==> To verify chisel is running on the VM:"
+echo "    gcloud compute ssh $VM_NAME --zone=$ZONE --command='systemctl status chisel-server'"
+echo ""
+echo "==> Once client connects, test from VM that SQL Server is reachable:"
+echo "    gcloud compute ssh $VM_NAME --zone=$ZONE --command='nc -zv 127.0.0.1 1433'"
+echo ""
+echo "==> To allow Cloud Run to reach this VM, note the INTERNAL IP:"
+INTERNAL_IP=$(gcloud compute instances describe "$VM_NAME" \
+  --project="$PROJECT" \
+  --zone="$ZONE" \
+  --format="get(networkInterfaces[0].networkIP)")
+echo "    Internal IP: $INTERNAL_IP"
+echo "    Use this in Cloud Run env var: MSSQL_HOST=$INTERNAL_IP"

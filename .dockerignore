@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.git/
+.gitignore
+*.egg-info/
+.env
+scripts/
+tests/
+docs/
+google-mcp/
+config/
+sql/
+.pytest_cache/
+*.md
+accuracy_report.json
