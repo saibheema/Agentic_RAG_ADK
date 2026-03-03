@@ -18,7 +18,7 @@ class AppSettings(BaseSettings):
     location: str = Field(default="us-central1", alias="GOOGLE_CLOUD_LOCATION")
 
     # ── Agent model ──────────────────────────────────────────
-    agent_model: str = Field(default="gemini-2.5-flash", alias="AGENT_MODEL")
+    agent_model: str = Field(default="gemini-3.0-flash-preview", alias="AGENT_MODEL")
 
     # ── Database ───────────────────────────────────────────────
     # DB_TYPE: "postgres" (default) or "mssql" for SQL Server
