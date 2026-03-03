@@ -53,5 +53,5 @@ Thumbs.db
 accuracy_report.json
 
 # Docs (kept local, not pushed to GitHub)
-# docs/ is tracked — do not add to gitignore
+docs/
 google-mcp/
