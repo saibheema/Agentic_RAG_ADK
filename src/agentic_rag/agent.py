@@ -307,17 +307,28 @@ def _inject_limit_if_missing(sql: str, max_rows: int, db_type: str = "") -> str:
     normalized = _normalized_sql(sql).lower()
 
     if _is_mssql_type(actual_type):
-        # SQL Server uses TOP N after SELECT
+        # SQL Server uses TOP N — syntax: SELECT [DISTINCT] TOP N ...
         if " top " in f" {normalized} ":
             return sql
         sql = sql.rstrip().rstrip(";")
-        # Handle both plain SELECT and CTE (WITH ... SELECT ...)
-        # Insert TOP after the last SELECT keyword (the outer query)
+        # DISTINCT must come before TOP in T-SQL.
+        # Correct: SELECT DISTINCT TOP 100 col ...
+        # Wrong:   SELECT TOP 100 DISTINCT col ...  ← causes syntax error
+        if re.search(r"(?i)\bSELECT\s+DISTINCT\b", sql):
+            return re.sub(
+                r"(?i)\bSELECT\s+DISTINCT\b",
+                f"SELECT DISTINCT TOP {max_rows}",
+                sql,
+                count=1,
+            )
+        # Plain SELECT or CTE (WITH ... SELECT ...).
+        # Use re.DOTALL so .* spans newlines, matching the outermost SELECT.
         return re.sub(
             r"(?i)\bSELECT\b(?!.*\bSELECT\b)",
             f"SELECT TOP {max_rows}",
             sql,
             count=1,
+            flags=re.DOTALL,
         )
 
     # PostgreSQL uses LIMIT
@@ -667,29 +678,17 @@ database_agent = LlmAgent(
         "averages, or any question answerable with SQL."
     ),
     instruction=(
-        "You are a senior database architect and SQL performance expert with "
-        "deep expertise in query optimization, indexing strategies, execution "
-        "plans, and writing high-performance SQL for both Microsoft SQL Server "
-        "(T-SQL) and PostgreSQL.\n"
-        "1. ALWAYS call get_schema_metadata first. The response includes:\n"
-        "   - 'tables': list of tables with columns AND sample_rows — use "
-        "sample_rows to discover real filter values (status strings, "
-        "category names, etc.) and never invent column names.\n"
-        "   - 'db_type': the exact SQL dialect in use (e.g. 'Microsoft SQL "
-        "Server (T-SQL)' or 'PostgreSQL') — write fully correct, idiomatic, "
-        "performance-optimized SQL for that engine. Apply your expert "
-        "knowledge: use appropriate JOINs, avoid SELECT *, use CTEs for "
-        "readability, apply window functions where relevant, and consider "
-        "index-friendly WHERE clauses.\n"
-        "   - 'today': today's date in YYYY-MM-DD — use this for ALL "
-        "date-relative queries; never assume a year from training data.\n"
-        "2. Write a read-only SELECT or WITH query, then call run_readonly_sql.\n"
-        "3. If run_readonly_sql returns ok=false, read the error, fix the SQL "
-        "and retry once.\n"
+        "You are a SQL specialist. "
+        "1. ALWAYS call get_schema_metadata first — it returns 'db_type' "
+        "(the exact database engine selected), 'tables' with columns and "
+        "sample_rows (use these to discover real filter values and column "
+        "names), and 'today' (use for date-relative queries).\n"
+        "2. Write a read-only SELECT query using the correct SQL dialect for "
+        "the 'db_type' returned, then call run_readonly_sql.\n"
+        "3. If run_readonly_sql returns ok=false, fix the SQL and retry once.\n"
         "Never invent data — rely only on tool outputs.\n"
-        "Present results clearly: use markdown tables for tabular data, "
-        "bold key metrics, and include a brief insight or summary after "
-        "the data."
+        "Present results clearly: use markdown tables for tabular data and "
+        "include a brief insight after the data."
     ),
     tools=[
         FunctionTool(get_schema_metadata),

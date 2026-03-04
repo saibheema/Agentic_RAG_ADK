@@ -241,6 +241,54 @@ class TestInjectTop:
         # CTE queries — regex matches first SELECT after WITH block
         assert "TOP 100" in result
 
+    def test_select_distinct_top_order(self):
+        """SELECT DISTINCT must produce SELECT DISTINCT TOP N, not SELECT TOP N DISTINCT."""
+        sql = "SELECT DISTINCT customer_account_number FROM vw_orders"
+        result = _inject_limit_if_missing(sql, 100)
+        # Must be DISTINCT before TOP — SQL Server syntax rule
+        assert result.startswith("SELECT DISTINCT TOP 100 ")
+        assert "SELECT TOP 100 DISTINCT" not in result
+
+    def test_select_distinct_multiline(self):
+        """Multiline SELECT DISTINCT should also be handled correctly."""
+        sql = (
+            "SELECT DISTINCT\n"
+            "    customer_account_number,\n"
+            "    billing_customer_name\n"
+            "FROM vw_salesperson_orders_summary\n"
+            "WHERE salesperson_name = 'ANNIE MILLER'"
+        )
+        result = _inject_limit_if_missing(sql, 200)
+        assert "SELECT DISTINCT TOP 200" in result
+        assert "SELECT TOP 200 DISTINCT" not in result
+
+    def test_select_distinct_preserves_existing_top(self):
+        """SELECT DISTINCT TOP N should not get double-injected."""
+        sql = "SELECT DISTINCT TOP 10 col FROM tbl"
+        result = _inject_limit_if_missing(sql, 100)
+        assert "TOP 100" not in result
+        assert "TOP 10" in result
+
+    def test_multiline_cte_top_injection(self):
+        """CTE with multiline formatting — TOP injected in outer SELECT only."""
+        sql = (
+            "WITH ranked AS (\n"
+            "    SELECT salesperson_name, COUNT(*) AS cnt\n"
+            "    FROM vw_orders\n"
+            "    GROUP BY salesperson_name\n"
+            ")\n"
+            "SELECT salesperson_name, cnt\n"
+            "FROM ranked\n"
+            "ORDER BY cnt DESC"
+        )
+        result = _inject_limit_if_missing(sql, 100)
+        # TOP 100 must appear exactly once
+        assert result.count("TOP 100") == 1
+        # The inner CTE SELECT must NOT have TOP injected
+        assert "SELECT TOP 100 salesperson_name, COUNT" not in result
+        # The outer SELECT must have TOP injected
+        assert "SELECT TOP 100 salesperson_name, cnt" in result
+
 
 # ── _is_mssql detection ─────────────────────────────────────────────────────
 
