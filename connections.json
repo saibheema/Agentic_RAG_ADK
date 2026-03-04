@@ -1,5 +1,5 @@
 {
-  "default": "yisbeta",
+  "default": "yisbeta_relay_vm",
   "connections": [
     {
       "alias": "local_pg",
@@ -32,6 +32,19 @@
       "local_only": true,
       "host": "127.0.0.1",
       "port": 14333,
+      "database": "YISBeta",
+      "user": "3vAnalysts2",
+      "password_secret": "projects/unicon-494419/secrets/yisbeta-db-password/versions/latest",
+      "instance_connection_name": "",
+      "allowed_tables": ""
+    },
+    {
+      "alias": "yisbeta_relay_vm",
+      "label": "YIS Beta via Cloud VPN Relay VM (client-to-site)",
+      "_comment": "VM yisbeta-vpn-relay in us-central1-f. Internal IP 10.128.0.3. Runs L2TP/IPSec Docker container forwarding port 1433 to 10.0.0.22:1433 via Youngsinc VPN.",
+      "db_type": "mssql",
+      "host": "10.128.0.3",
+      "port": 1433,
       "database": "YISBeta",
       "user": "3vAnalysts2",
       "password_secret": "projects/unicon-494419/secrets/yisbeta-db-password/versions/latest",

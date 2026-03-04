@@ -11,6 +11,7 @@ Requires the Docker VPN tunnel running first:
 """
 
 import os
+import socket
 import sys
 import threading
 
@@ -46,7 +47,33 @@ def list_databases() -> JSONResponse:
     return JSONResponse({"connections": connections, "default": default})
 
 
-# ── Serve custom UI at /app (same origin = no CORS needed) ──────────────────
+@app.get("/healthz/db")
+def healthz_db() -> JSONResponse:
+    """Diagnostic: test TCP connectivity to all configured DB hosts."""
+    try:
+        from agentic_rag.connections import get_connection, list_connections
+        conns = list_connections()
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)})
+    results = {}
+    for conn in conns:
+        alias = conn.get("alias", "?")
+        full = get_connection(alias) or {}
+        host = full.get("host", "")
+        port = int(full.get("port", 1433))
+        if not host:
+            results[alias] = "SKIP: no host"
+            continue
+        try:
+            s = socket.create_connection((host, port), timeout=5)
+            s.close()
+            results[alias] = f"REACHABLE ({host}:{port})"
+        except Exception as exc:
+            results[alias] = f"FAILED ({host}:{port}): {exc}"
+    return JSONResponse({"db_connectivity": results})
+
+
+# ── Serve UI static files ──────────────────────────────────────────────────
 _UI_DIR = os.path.join(_HERE, "ui")
 if os.path.isdir(_UI_DIR):
     app.mount("/app", StaticFiles(directory=_UI_DIR, html=True), name="ui")

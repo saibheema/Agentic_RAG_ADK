@@ -14,6 +14,7 @@ Then point the UI's API Base URL to http://localhost:8081
 from __future__ import annotations
 
 import os
+import socket
 
 import uvicorn
 from fastapi.responses import JSONResponse
@@ -43,6 +44,23 @@ def databases() -> JSONResponse:
             "default": default_alias(),
         }
     )
+
+
+@app.get("/healthz/db")
+def healthz_db() -> JSONResponse:
+    """Diagnostic: test TCP connectivity to configured DB hosts."""
+    results = {}
+    for conn in list_connections():
+        alias = conn.get("alias", "?")
+        host = conn.get("host", "")
+        port = int(conn.get("port", 1433))
+        try:
+            s = socket.create_connection((host, port), timeout=5)
+            s.close()
+            results[alias] = "REACHABLE"
+        except Exception as exc:
+            results[alias] = f"FAILED: {exc}"
+    return JSONResponse({"db_connectivity": results})
 
 
 if __name__ == "__main__":

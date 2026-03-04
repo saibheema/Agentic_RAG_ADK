@@ -307,17 +307,28 @@ def _inject_limit_if_missing(sql: str, max_rows: int, db_type: str = "") -> str:
     normalized = _normalized_sql(sql).lower()
 
     if _is_mssql_type(actual_type):
-        # SQL Server uses TOP N after SELECT
+        # SQL Server uses TOP N — syntax: SELECT [DISTINCT] TOP N ...
         if " top " in f" {normalized} ":
             return sql
         sql = sql.rstrip().rstrip(";")
-        # Handle both plain SELECT and CTE (WITH ... SELECT ...)
-        # Insert TOP after the last SELECT keyword (the outer query)
+        # DISTINCT must come before TOP in T-SQL.
+        # Correct: SELECT DISTINCT TOP 100 col ...
+        # Wrong:   SELECT TOP 100 DISTINCT col ...  ← causes syntax error
+        if re.search(r"(?i)\bSELECT\s+DISTINCT\b", sql):
+            return re.sub(
+                r"(?i)\bSELECT\s+DISTINCT\b",
+                f"SELECT DISTINCT TOP {max_rows}",
+                sql,
+                count=1,
+            )
+        # Plain SELECT or CTE (WITH ... SELECT ...).
+        # Use re.DOTALL so .* spans newlines, matching the outermost SELECT.
         return re.sub(
             r"(?i)\bSELECT\b(?!.*\bSELECT\b)",
             f"SELECT TOP {max_rows}",
             sql,
             count=1,
+            flags=re.DOTALL,
         )
 
     # PostgreSQL uses LIMIT
@@ -649,6 +660,9 @@ _router_model = os.environ.get("ROUTER_MODEL", "gemini-2.5-flash-lite")
 _no_think = BuiltInPlanner(
     thinking_config=types.ThinkingConfig(thinking_budget=0)
 )
+_light_think = BuiltInPlanner(
+    thinking_config=types.ThinkingConfig(thinking_budget=1024)
+)
 _fast_config = types.GenerateContentConfig(
     max_output_tokens=2048,
 )
@@ -659,7 +673,7 @@ _router_config = types.GenerateContentConfig(
 database_agent = LlmAgent(
     name="database_agent",
     model=_model,
-    planner=_no_think,
+    planner=_light_think,
     generate_content_config=_fast_config,
     description=(
         "Specialist for structured data questions. Handles anything about "
@@ -667,29 +681,33 @@ database_agent = LlmAgent(
         "averages, or any question answerable with SQL."
     ),
     instruction=(
-        "You are a senior database architect and SQL performance expert with "
-        "deep expertise in query optimization, indexing strategies, execution "
-        "plans, and writing high-performance SQL for both Microsoft SQL Server "
-        "(T-SQL) and PostgreSQL.\n"
-        "1. ALWAYS call get_schema_metadata first. The response includes:\n"
-        "   - 'tables': list of tables with columns AND sample_rows — use "
-        "sample_rows to discover real filter values (status strings, "
-        "category names, etc.) and never invent column names.\n"
-        "   - 'db_type': the exact SQL dialect in use (e.g. 'Microsoft SQL "
-        "Server (T-SQL)' or 'PostgreSQL') — write fully correct, idiomatic, "
-        "performance-optimized SQL for that engine. Apply your expert "
-        "knowledge: use appropriate JOINs, avoid SELECT *, use CTEs for "
-        "readability, apply window functions where relevant, and consider "
-        "index-friendly WHERE clauses.\n"
-        "   - 'today': today's date in YYYY-MM-DD — use this for ALL "
-        "date-relative queries; never assume a year from training data.\n"
-        "2. Write a read-only SELECT or WITH query, then call run_readonly_sql.\n"
-        "3. If run_readonly_sql returns ok=false, read the error, fix the SQL "
-        "and retry once.\n"
-        "Never invent data — rely only on tool outputs.\n"
-        "Present results clearly: use markdown tables for tabular data, "
-        "bold key metrics, and include a brief insight or summary after "
-        "the data."
+        "You are a database SQL agent. Your SOLE purpose is to answer "
+        "questions by querying a database using SQL.\n\n"
+        "## STRICT RULES\n"
+        "- You have EXACTLY two tools: get_schema_metadata and run_readonly_sql.\n"
+        "- Your ONLY valid actions are: (a) call one of these two tools, or "
+        "(b) reply with natural language text.\n"
+        "- NEVER output code (Python, JavaScript, etc.), NEVER call print(), "
+        "NEVER generate function calls other than these two tools.\n"
+        "- The 'sql' parameter of run_readonly_sql must contain a SQL query "
+        "string — never programming code.\n\n"
+        "## FOLLOW-UP QUESTIONS\n"
+        "When the user sends a short follow-up like 'which are pending' or "
+        "'show me the top 5', refer to the previous conversation to determine "
+        "which table/columns were queried, then build a NEW SQL query that "
+        "adds the user's filter or modification. Always call "
+        "get_schema_metadata first if you haven't already in this turn.\n\n"
+        "## WORKFLOW\n"
+        "1. ALWAYS call get_schema_metadata first — it returns 'db_type' "
+        "(the database engine), 'tables' with columns and sample_rows "
+        "(use these to discover real filter values and column names), and "
+        "'today' (use for date-relative queries).\n"
+        "2. Write a read-only SELECT query in the correct SQL dialect for "
+        "the returned 'db_type', then call run_readonly_sql.\n"
+        "3. If run_readonly_sql returns ok=false, fix the SQL and retry once.\n"
+        "4. Never invent data — rely only on tool outputs.\n"
+        "5. Present results clearly: use markdown tables for tabular data "
+        "and include a brief insight after the data."
     ),
     tools=[
         FunctionTool(get_schema_metadata),
