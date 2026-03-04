@@ -660,6 +660,9 @@ _router_model = os.environ.get("ROUTER_MODEL", "gemini-2.5-flash-lite")
 _no_think = BuiltInPlanner(
     thinking_config=types.ThinkingConfig(thinking_budget=0)
 )
+_light_think = BuiltInPlanner(
+    thinking_config=types.ThinkingConfig(thinking_budget=1024)
+)
 _fast_config = types.GenerateContentConfig(
     max_output_tokens=2048,
 )
@@ -670,7 +673,7 @@ _router_config = types.GenerateContentConfig(
 database_agent = LlmAgent(
     name="database_agent",
     model=_model,
-    planner=_no_think,
+    planner=_light_think,
     generate_content_config=_fast_config,
     description=(
         "Specialist for structured data questions. Handles anything about "
@@ -678,17 +681,33 @@ database_agent = LlmAgent(
         "averages, or any question answerable with SQL."
     ),
     instruction=(
-        "You are a SQL specialist. "
+        "You are a database SQL agent. Your SOLE purpose is to answer "
+        "questions by querying a database using SQL.\n\n"
+        "## STRICT RULES\n"
+        "- You have EXACTLY two tools: get_schema_metadata and run_readonly_sql.\n"
+        "- Your ONLY valid actions are: (a) call one of these two tools, or "
+        "(b) reply with natural language text.\n"
+        "- NEVER output code (Python, JavaScript, etc.), NEVER call print(), "
+        "NEVER generate function calls other than these two tools.\n"
+        "- The 'sql' parameter of run_readonly_sql must contain a SQL query "
+        "string — never programming code.\n\n"
+        "## FOLLOW-UP QUESTIONS\n"
+        "When the user sends a short follow-up like 'which are pending' or "
+        "'show me the top 5', refer to the previous conversation to determine "
+        "which table/columns were queried, then build a NEW SQL query that "
+        "adds the user's filter or modification. Always call "
+        "get_schema_metadata first if you haven't already in this turn.\n\n"
+        "## WORKFLOW\n"
         "1. ALWAYS call get_schema_metadata first — it returns 'db_type' "
-        "(the exact database engine selected), 'tables' with columns and "
-        "sample_rows (use these to discover real filter values and column "
-        "names), and 'today' (use for date-relative queries).\n"
-        "2. Write a read-only SELECT query using the correct SQL dialect for "
-        "the 'db_type' returned, then call run_readonly_sql.\n"
+        "(the database engine), 'tables' with columns and sample_rows "
+        "(use these to discover real filter values and column names), and "
+        "'today' (use for date-relative queries).\n"
+        "2. Write a read-only SELECT query in the correct SQL dialect for "
+        "the returned 'db_type', then call run_readonly_sql.\n"
         "3. If run_readonly_sql returns ok=false, fix the SQL and retry once.\n"
-        "Never invent data — rely only on tool outputs.\n"
-        "Present results clearly: use markdown tables for tabular data and "
-        "include a brief insight after the data."
+        "4. Never invent data — rely only on tool outputs.\n"
+        "5. Present results clearly: use markdown tables for tabular data "
+        "and include a brief insight after the data."
     ),
     tools=[
         FunctionTool(get_schema_metadata),
