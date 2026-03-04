@@ -33,8 +33,8 @@ scripts/vpn_strongswan_disconnect.sh
 # Docker VPN tunnel — run script contains credentials
 scripts/docker_vpn/run_vpn_tunnel.sh
 
-# VPN relay VM setup — contains VPN credentials when filled in
-scripts/vpn_relay_vm/setup_vpn_relay_vm.sh
+# VPN relay VM setup — fill in your real credentials locally (never commit with real creds)
+# scripts/vpn_relay_vm/setup_vpn_relay_vm.sh
 
 # Temporary local test scripts
 test_run.py
