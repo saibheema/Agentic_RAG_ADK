@@ -331,14 +331,15 @@ def _inject_limit_if_missing(sql: str, max_rows: int, db_type: str = "") -> str:
                 count=1,
             )
         # Plain SELECT or CTE (WITH ... SELECT ...).
-        # Use re.DOTALL so .* spans newlines, matching the outermost SELECT.
-        return re.sub(
-            r"(?i)\bSELECT\b(?!.*\bSELECT\b)",
-            f"SELECT TOP {max_rows}",
-            sql,
-            count=1,
-            flags=re.DOTALL,
-        )
+        # Find the LAST SELECT (the outermost projection in a CTE) and inject TOP N.
+        # Using rfind on lowercased sql is simpler and more reliable than a
+        # negative-lookahead regex which fails on multi-line CTEs.
+        lowered = sql.lower()
+        last_select_pos = lowered.rfind('select')
+        if last_select_pos == -1:
+            return sql  # no SELECT found — return as-is
+        after_select = sql[last_select_pos + len('select'):]
+        return sql[:last_select_pos] + f"SELECT TOP {max_rows}" + after_select
 
     # PostgreSQL uses LIMIT
     if " limit " in f" {normalized} ":
@@ -411,7 +412,7 @@ def get_schema_metadata(tool_context: ToolContext) -> dict[str, Any]:
             cached["today"] = datetime.date.today().isoformat()
             return cached  # type: ignore[return-value]
 
-    conn = _connect()
+    conn = _connect(cfg)  # MUST pass cfg so the right DB alias is used
     try:
         cur = conn.cursor()
 
@@ -472,7 +473,7 @@ def get_schema_metadata(tool_context: ToolContext) -> dict[str, Any]:
                     )
                 else:
                     cur.execute(f'SELECT * FROM "{tname}" LIMIT 2')
-                samples[tname] = _to_rows(cur)
+                samples[tname] = _mask_rows(_to_rows(cur))  # mask PII in sample rows too
             except Exception:
                 samples[tname] = []
 
@@ -676,7 +677,7 @@ _no_think = BuiltInPlanner(
     thinking_config=types.ThinkingConfig(thinking_budget=0)
 )
 _light_think = BuiltInPlanner(
-    thinking_config=types.ThinkingConfig(thinking_budget=1024)
+    thinking_config=types.ThinkingConfig(thinking_budget=8192)  # higher budget = more accurate SQL
 )
 _fast_config = types.GenerateContentConfig(
     max_output_tokens=2048,
