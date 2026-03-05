@@ -83,45 +83,215 @@ body {
 /* ---- App shell -------------------------------------------- */
 .app-shell {
   display: flex;
-  flex-direction: column;
-  height: 100vh;          /* fallback */
+  flex-direction: row;
+  height: 100vh;
   height: 100dvh;
-  max-width: 900px;
-  margin: 0 auto;
+  overflow: hidden;
 }
 
-/* ---- Header ----------------------------------------------- */
-.app-header {
+/* ---- Main content area ------------------------------------ */
+.main-content {
+  flex: 1 1 0;
   display: flex;
-  flex-direction: row;
+  flex-direction: column;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* ---- Sidebar ---------------------------------------------- */
+.sidebar {
+  width: 260px;
+  min-width: 260px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  transition: width var(--dur) ease, min-width var(--dur) ease,
+              background var(--dur) ease, border-color var(--dur) ease;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.sidebar.collapsed {
+  width: 60px;
+  min-width: 60px;
+}
+
+.sidebar-header {
+  display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 56px;
-  min-height: 56px;
-  padding: 0 16px;
+  padding: 16px 14px 12px;
   flex-shrink: 0;
-  background: var(--header-bg);
+}
+
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  overflow: hidden;
+}
+
+.sidebar-logo {
+  font-size: 1.2rem;
+  color: var(--accent);
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.sidebar-name {
+  font-size: 0.97rem;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  transition: opacity var(--dur) ease, max-width var(--dur) ease;
+}
+
+.sidebar.collapsed .sidebar-name { opacity: 0; max-width: 0; }
+
+.sidebar-collapse-btn {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--xmuted);
+  transition: transform var(--dur) ease, color var(--dur) ease;
+}
+.sidebar-collapse-btn:hover { color: var(--text); border-color: transparent; }
+.sidebar.collapsed .sidebar-collapse-btn { transform: rotate(180deg); }
+
+/* ---- Sidebar navigation ----------------------------------- */
+.sidebar-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 4px 10px;
+  flex-shrink: 0;
+}
+
+.sidebar-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 12px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  border-radius: 10px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  text-align: left;
+  transition: background var(--dur) ease, color var(--dur) ease;
+  white-space: nowrap;
+}
+
+.sidebar-nav-item:hover:not(.active) {
+  background: var(--surface2);
+  color: var(--text);
+  border-color: transparent;
+}
+
+.sidebar-nav-item.active {
+  background: rgba(37,99,235,0.1);
+  color: var(--accent);
+  border-color: transparent;
+}
+
+[data-theme="dark"] .sidebar-nav-item.active {
+  background: rgba(59,130,246,0.15);
+  color: var(--accent-h);
+}
+
+.nav-icon {
+  flex-shrink: 0;
+  opacity: 0.8;
+}
+.sidebar-nav-item.active .nav-icon { opacity: 1; }
+
+.nav-label {
+  overflow: hidden;
+  transition: opacity var(--dur) ease, max-width var(--dur) ease;
+}
+.sidebar.collapsed .nav-label { opacity: 0; max-width: 0; }
+
+/* ---- Sidebar spacer --------------------------------------- */
+.sidebar-spacer { flex: 1 1 0; }
+
+/* ---- Sidebar DB selector ---------------------------------- */
+.sidebar-db {
+  margin: 0 10px 8px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+
+.sidebar.collapsed .sidebar-db { display: none; }
+
+/* ---- Sidebar footer --------------------------------------- */
+.sidebar-footer {
+  border-top: 1px solid var(--border);
+  padding: 10px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: border-color var(--dur) ease;
+}
+
+.sidebar-user {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border-radius: 10px;
+  background: var(--surface2);
+  transition: background var(--dur) ease;
+  overflow: hidden;
+}
+
+.sidebar-user:hover { background: var(--bg); }
+
+.sidebar-user-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: hidden;
+}
+
+.sidebar.collapsed .sidebar-user-text { display: none; }
+.sidebar.collapsed .sign-out-btn { display: none; }
+
+.sidebar-footer-actions {
+  display: flex;
+  gap: 6px;
+}
+
+/* ---- View header (inside main-content) -------------------- */
+.view-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 52px;
+  min-height: 52px;
+  padding: 0 20px;
+  flex-shrink: 0;
   border-bottom: 1px solid var(--border);
-  position: sticky;
-  top: 0;
-  z-index: 20;
+  background: var(--header-bg);
   transition: background var(--dur) ease, border-color var(--dur) ease;
 }
 
-.header-left,
-.header-right {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 10px;
-}
-
-.app-title {
-  font-size: 1rem;
+.view-title {
+  font-size: 0.95rem;
   font-weight: 600;
   color: var(--text);
   letter-spacing: -0.01em;
-  white-space: nowrap;
 }
 
 /* ---- Icon buttons ----------------------------------------- */
@@ -939,36 +1109,19 @@ code.sql-display {
 }
 
 /* ============================================================
-   Tab Navigation
+   Mobile sidebar toggle
    ============================================================ */
-.tab-nav {
-  display: flex;
-  gap: 4px;
-  margin-left: 12px;
-}
-
-.tab-btn {
-  border: 1px solid transparent;
-  background: transparent;
-  color: var(--muted);
-  border-radius: 8px;
-  padding: 5px 13px;
-  font-size: 0.84rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: background var(--dur) ease, color var(--dur) ease, border-color var(--dur) ease;
-}
-
-.tab-btn:hover:not(.active) {
-  background: var(--surface2);
-  color: var(--text);
-  border-color: var(--border);
-}
-
-.tab-btn.active {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
+@media (max-width: 640px) {
+  .sidebar {
+    position: fixed;
+    left: 0; top: 0; bottom: 0;
+    z-index: 100;
+    transform: translateX(0);
+    box-shadow: 4px 0 16px rgba(0,0,0,0.15);
+    transition: transform var(--dur) ease;
+  }
+  .sidebar.mobile-hidden { transform: translateX(-100%); }
+  .main-content { width: 100%; }
 }
 
 /* ============================================================
@@ -987,30 +1140,18 @@ code.sql-display {
 }
 
 /* ============================================================
-   User Pill
+   User elements (sidebar footer)
    ============================================================ */
-.user-pill {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px 4px 6px;
-  border: 1px solid var(--border);
-  border-radius: 20px;
-  background: var(--surface);
-  font-size: 0.82rem;
-  transition: background var(--dur) ease;
-}
-
 .user-avatar {
-  width: 24px;
-  height: 24px;
+  width: 30px;
+  height: 30px;
   border-radius: 50%;
   background: var(--accent);
   color: #fff;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 0.72rem;
+  font-size: 0.78rem;
   font-weight: 700;
   flex-shrink: 0;
 }
@@ -1018,14 +1159,13 @@ code.sql-display {
 .user-email {
   font-size: 0.78rem;
   color: var(--muted);
-  max-width: 140px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .admin-badge {
-  font-size: 0.65rem;
+  font-size: 0.62rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -1033,23 +1173,26 @@ code.sql-display {
   color: #fff;
   padding: 1px 6px;
   border-radius: 10px;
+  width: fit-content;
 }
 
 .sign-out-btn {
+  flex-shrink: 0;
   border: none;
   background: transparent;
   color: var(--xmuted);
-  padding: 2px 4px;
+  padding: 3px 5px;
   cursor: pointer;
-  font-size: 0.88rem;
+  font-size: 0.9rem;
   line-height: 1;
-  border-radius: 4px;
+  border-radius: 6px;
   transition: color var(--dur) ease, background var(--dur) ease;
+  margin-left: auto;
 }
 
 .sign-out-btn:hover {
   color: var(--text);
-  background: var(--surface2);
+  background: var(--border);
   border-color: transparent;
 }
 
@@ -1074,8 +1217,7 @@ code.sql-display {
    Responsive adjustments
    ============================================================ */
 @media (max-width: 480px) {
-  .tab-nav      { margin-left: 6px; }
-  .tab-btn      { padding: 4px 9px; font-size: 0.78rem; }
-  .user-email   { display: none; }
   .auth-card    { padding: 36px 24px; }
+  .view-header  { padding: 0 12px; }
+  .composer     { padding: 8px 10px 12px; }
 }

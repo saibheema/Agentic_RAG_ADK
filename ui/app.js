@@ -619,23 +619,33 @@ el.apiBase.addEventListener('change', () => {
   });
 })();
 
-/* ── Tab Navigation ──────────────────────────────────────── */
+/* ── Sidebar Navigation ─────────────────────────────────── */
 (function initTabs() {
-  const tabBtns   = document.querySelectorAll('.tab-btn');
+  const navItems  = document.querySelectorAll('.sidebar-nav-item');
   const tabViews  = document.querySelectorAll('.tab-view');
-  const dbBar     = document.querySelector('.topbar-db');
   const settPanel = document.getElementById('settingsPanel');
 
-  tabBtns.forEach((btn) => {
+  navItems.forEach((btn) => {
     btn.addEventListener('click', () => {
       const tab = btn.dataset.tab;
-      tabBtns.forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
+      navItems.forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
       tabViews.forEach((v) => v.classList.toggle('active', v.id === `view-${tab}`));
-      if (dbBar)    dbBar.style.display = tab === 'rag' ? '' : 'none';
       if (settPanel && tab !== 'rag') settPanel.classList.remove('open');
       window.dispatchEvent(new CustomEvent('tab-changed', { detail: { tab } }));
     });
   });
+
+  // Sidebar collapse toggle
+  const sidebar   = document.getElementById('sidebar');
+  const collapseBtn = document.getElementById('sidebarCollapseBtn');
+  if (sidebar && collapseBtn) {
+    const saved = localStorage.getItem('sidebarCollapsed') === 'true';
+    if (saved) sidebar.classList.add('collapsed');
+    collapseBtn.addEventListener('click', () => {
+      sidebar.classList.toggle('collapsed');
+      localStorage.setItem('sidebarCollapsed', sidebar.classList.contains('collapsed'));
+    });
+  }
 })();
 
 /* ── Settings Panel Toggle ─────────────────────────────── */

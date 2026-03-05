@@ -372,7 +372,7 @@ def merge_pull_request(pr_number: int, merge_commit_message: str = "") -> dict:
 def create_github_issue(
     title: str,
     body: str,
-    labels: list[str] | None = None,
+    labels: str = "support/enhancement",
 ) -> dict:
     """Create a GitHub issue for enhancements or cases needing admin review.
 
@@ -380,9 +380,9 @@ def create_github_issue(
         title: Concise issue title
         body: Full description including the user's original complaint verbatim,
               your analysis, and recommended next steps
-        labels: Labels to apply (defaults to ['support/enhancement'])
+        labels: Comma-separated label names to apply (default: 'support/enhancement')
     """
-    issue_labels = labels or ["support/enhancement"]
+    issue_labels = [l.strip() for l in labels.split(",") if l.strip()] or ["support/enhancement"]
     result = _gh(
         "POST",
         f"/repos/{_REPO_OWNER}/{_REPO_NAME}/issues",

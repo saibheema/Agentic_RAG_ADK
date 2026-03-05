@@ -17,6 +17,7 @@ import threading
 
 import uvicorn
 from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from google.adk.cli.fast_api import get_fast_api_app
@@ -30,6 +31,14 @@ app: FastAPI = get_fast_api_app(
     agents_dir=_AGENTS_DIR,
     web=False,  # API-only mode (no ADK dev UI)
     allow_origins=["*"],
+)
+
+# Explicit CORS middleware so Authorization header is allowed on preflight
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # ── Firebase Auth Middleware ──────────────────────────────────────────────────
