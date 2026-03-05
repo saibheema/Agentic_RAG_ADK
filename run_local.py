@@ -22,6 +22,11 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from google.adk.cli.fast_api import get_fast_api_app
 
+try:
+    from google.genai.errors import ClientError as _GenAIClientError
+except ImportError:
+    _GenAIClientError = None
+
 # ── Resolve agents directory relative to this file ──────────────────────────
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _AGENTS_DIR = os.path.join(_HERE, "src")
@@ -32,6 +37,25 @@ app: FastAPI = get_fast_api_app(
     web=False,  # API-only mode (no ADK dev UI)
     allow_origins=["*"],
 )
+
+# ── Gemini rate-limit / API error handler ────────────────────────────────────
+@app.exception_handler(Exception)
+async def _genai_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Convert Gemini 429 / 5xx API errors into readable JSON instead of HTTP 500."""
+    if _GenAIClientError and isinstance(exc, _GenAIClientError):
+        exc_str = str(exc)
+        if "429" in exc_str or "RESOURCE_EXHAUSTED" in exc_str:
+            return JSONResponse(
+                {"error": "The AI model is currently busy. Please wait a moment and try again."},
+                status_code=503,
+            )
+        return JSONResponse(
+            {"error": f"AI model error. Please try again."},
+            status_code=502,
+        )
+    # All other unhandled exceptions → generic 500
+    return JSONResponse({"error": "Internal server error. Please try again."}, status_code=500)
+
 
 # Explicit CORS middleware so Authorization header is allowed on preflight
 app.add_middleware(
