@@ -369,6 +369,82 @@ def merge_pull_request(pr_number: int, merge_commit_message: str = "") -> dict:
 # ── Tool: create GitHub issue (enhancements / ambiguous) ─────────────────────
 
 
+def list_open_issues(search: str = "") -> dict:
+    """List open GitHub issues in the repository, optionally filtered by a search term.
+
+    Args:
+        search: Optional keyword(s) to filter issues by title/body similarity.
+                Leave empty to return the 30 most recent open issues.
+
+    Returns a list of issues with number, title, labels, and URL.
+    """
+    params: dict = {"state": "open", "per_page": 50}
+    result = _gh("GET", f"/repos/{_REPO_OWNER}/{_REPO_NAME}/issues", params=params)
+    if isinstance(result, dict) and result.get("ok") is False:
+        return result
+    # GitHub's /issues endpoint also returns PRs — exclude them
+    issues = [i for i in result if not i.get("pull_request")]
+    if search:
+        kw = search.lower()
+        issues = [
+            i for i in issues
+            if kw in i.get("title", "").lower() or kw in (i.get("body") or "").lower()
+        ]
+    return {
+        "ok": True,
+        "total": len(issues),
+        "issues": [
+            {
+                "number": i["number"],
+                "title": i["title"],
+                "state": i["state"],
+                "labels": [lb["name"] for lb in i.get("labels", [])],
+                "url": i["html_url"],
+                "created_at": i["created_at"],
+            }
+            for i in issues
+        ],
+    }
+
+
+def list_open_pull_requests(search: str = "") -> dict:
+    """List open pull requests in the repository, optionally filtered by a search term.
+
+    Args:
+        search: Optional keyword(s) to filter PRs by title/body similarity.
+                Leave empty to return the 30 most recent open PRs.
+
+    Returns a list of PRs with number, title, branch, labels, and URL.
+    """
+    params: dict = {"state": "open", "per_page": 50}
+    result = _gh("GET", f"/repos/{_REPO_OWNER}/{_REPO_NAME}/pulls", params=params)
+    if isinstance(result, dict) and result.get("ok") is False:
+        return result
+    prs = result if isinstance(result, list) else []
+    if search:
+        kw = search.lower()
+        prs = [
+            p for p in prs
+            if kw in p.get("title", "").lower() or kw in (p.get("body") or "").lower()
+        ]
+    return {
+        "ok": True,
+        "total": len(prs),
+        "pull_requests": [
+            {
+                "number": p["number"],
+                "title": p["title"],
+                "branch": p["head"]["ref"],
+                "state": p["state"],
+                "labels": [lb["name"] for lb in p.get("labels", [])],
+                "url": p["html_url"],
+                "created_at": p["created_at"],
+            }
+            for p in prs
+        ],
+    }
+
+
 def create_github_issue(
     title: str,
     body: str,
@@ -416,6 +492,23 @@ You are the Support Agent for the Agentic RAG application (GitHub repo: saibheem
 Users report problems they experience. Your job: investigate, classify, and resolve.
 
 ---
+## STEP 0 — CHECK FOR DUPLICATES FIRST
+
+Before doing ANYTHING else, call `list_open_issues` and `list_open_pull_requests`
+with keywords from the user's message to check for existing work.
+
+- If an **open issue** already covers this exact problem → tell the user:
+  "Thank you for reaching out! We already have this on our radar — it has been previously logged
+  with reference **#N**. Our team is aware and working on it. You can quote **#N** for any follow-ups."
+  Then stop — do NOT create another issue or PR.
+- If an **open PR** already addresses this exact problem → tell the user:
+  "Good news — our team is already working on a fix for this. Reference **#N** is in progress
+  and should be available soon. No further action is needed on your end."
+  Then stop.
+- If existing work is **related but not identical** → mention it, then continue with the normal flow
+  and cross-reference the existing issue/PR in any new issue/PR body.
+
+---
 ## STEP 1 — CLASSIFY
 
 Read the user's message carefully. Classify as ONE of:
@@ -436,9 +529,13 @@ code-backed answers. Do NOT create any PRs or GitHub issues.
 1. Explain clearly why this is an enhancement (not a bug), or what information is missing.
 2. Call `create_github_issue` with:
    - Title: concise summary
-   - Body: user's exact complaint, your analysis, why admin review is needed
+   - Body: user's exact complaint, your analysis, why admin review is needed.
+     If Step 0 found related issues/PRs, cross-reference them here.
    - Labels: ["support/enhancement"] for enhancements; ["support/needs-clarification"] for ambiguous
-3. Tell the user: "I've logged this as GitHub issue #N for the team to review and prioritise."
+3. Tell the user a support-style message. Do NOT mention GitHub, issues, or PRs.
+   Use this template (fill in the reference number):
+   "Thank you for reaching out! We've acknowledged your request and it has been assigned reference number **#N**.
+   Our project management team will review it and get back to you. You can quote **#N** for any follow-ups."
 
 ---
 ## STEP 2C — bug
@@ -471,16 +568,22 @@ Explain why the application is behaving correctly. Guide the user on the correct
    - **Confidence**: 100% — auto-fix approved by Support Agent
 4. `request_copilot_review(pr_number)`
 5. `merge_pull_request(pr_number)` — this triggers CI/CD (~3-5 min to deploy)
-6. Reply: "✅ I've identified the bug and merged fix PR #N. The fix is deploying now — it will be
-   live in approximately 5 minutes."
+6. Reply with a support-style message. Do NOT mention GitHub, PRs, or branches.
+   Use this template:
+   "✅ Great news! We've identified and resolved the issue. A fix has been applied and is currently
+   deploying — it should be live in approximately 5 minutes. Your reference number is **#N**.
+   Please reach out if you continue to experience this problem."
 
 ### 2C-5. confidence < 100 → ADMIN-REVIEW PATH
 1. `create_fix_branch(issue_slug)`
 2. `commit_file_fix(...)` — commit your best partial fix or analysis notes as a code comment
 3. `open_pull_request(branch, title, body, confidence=<your score>)` — explain limitation in body
 4. `request_copilot_review(pr_number)`
-5. Reply: "I've identified a potential issue (confidence: N%) and opened PR #N for the team to
-   review. Someone will verify and deploy the fix."
+5. Reply with a support-style message. Do NOT mention GitHub, PRs, branches, or confidence scores.
+   Use this template:
+   "Thank you for reporting this. We've investigated the issue and flagged it for our engineering
+   team to review. Your reference number is **#N**. We'll keep you updated on progress and aim
+   to have a fix available as soon as possible."
 
 ---
 ## GUARDRAILS — NEVER VIOLATE
@@ -491,14 +594,20 @@ Explain why the application is behaving correctly. Guide the user on the correct
 - `commit_file_fix` requires the FULL file content — never pass a partial diff
 - Never fabricate code or results — only state what you found in the repository
 - If a tool returns an error, report it honestly to the user
+- NEVER expose internal implementation details to the user: no GitHub URLs, branch names,
+  PR numbers as "PR", commit SHAs, tool names, or technical jargon. Reference numbers only.
 
 ---
 ## TONE
 
-Professional, empathetic, and clear. Users may not be technical — avoid jargon.
-Always tell the user: what you found, what you did, and what happens next.
+Warm, professional, and concise — like a skilled human support agent.
+Users are NOT technical. Avoid all developer terminology.
+Always tell the user: what you understood, what action was taken, and what they can expect next.
+Use the reference number (#N) so they can follow up easily.
 """,
     tools=[
+        FunctionTool(list_open_issues),
+        FunctionTool(list_open_pull_requests),
         FunctionTool(read_repo_file),
         FunctionTool(list_repo_directory),
         FunctionTool(search_repo_code),
