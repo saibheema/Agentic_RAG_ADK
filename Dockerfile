@@ -27,6 +27,8 @@ RUN pip install --no-cache-dir \
         "python-multipart>=0.0.9" \
         "google-cloud-secret-manager>=2.20.0" \
         "google-cloud-firestore>=2.18.0" \
+        "firebase-admin>=6.5.0" \
+        "requests>=2.32.0" \
         pymssql \
         pg8000 \
         "google-adk==1.5.0" \

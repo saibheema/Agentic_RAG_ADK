@@ -16,7 +16,7 @@ import sys
 import threading
 
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from google.adk.cli.fast_api import get_fast_api_app
@@ -31,6 +31,57 @@ app: FastAPI = get_fast_api_app(
     web=False,  # API-only mode (no ADK dev UI)
     allow_origins=["*"],
 )
+
+# ── Firebase Auth Middleware ──────────────────────────────────────────────────
+# Set AUTH_DISABLED=true to skip auth (useful for local dev without Firebase).
+_AUTH_DISABLED = os.environ.get("AUTH_DISABLED", "false").lower() in ("true", "1", "yes")
+
+# Paths that never require authentication
+_EXEMPT = ("/app", "/", "/healthz", "/favicon", "/databases")
+
+try:
+    import firebase_admin
+    from firebase_admin import auth as _fb_auth
+    _FIREBASE_AVAILABLE = True
+except ImportError:
+    _FIREBASE_AVAILABLE = False
+
+_firebase_init_done = False
+
+
+def _init_firebase_once() -> None:
+    global _firebase_init_done
+    if _firebase_init_done or not _FIREBASE_AVAILABLE:
+        return
+    if not firebase_admin._apps:
+        firebase_admin.initialize_app(options={"projectId": "unicon-494419"})
+    _firebase_init_done = True
+
+
+@app.middleware("http")
+async def firebase_auth_middleware(request: Request, call_next):
+    """Validate Firebase ID tokens on API routes. Exempt static files & health checks."""
+    if _AUTH_DISABLED or not _FIREBASE_AVAILABLE:
+        return await call_next(request)
+
+    path = request.url.path
+    if request.method == "OPTIONS" or any(path.startswith(p) for p in _EXEMPT):
+        return await call_next(request)
+
+    auth_header = request.headers.get("Authorization", "")
+    if not auth_header.startswith("Bearer "):
+        return JSONResponse({"error": "Authentication required"}, status_code=401)
+
+    token = auth_header[7:]
+    try:
+        _init_firebase_once()
+        decoded = _fb_auth.verify_id_token(token)
+        request.state.user_email = decoded.get("email", "")
+        request.state.user_uid = decoded.get("uid", "")
+    except Exception:
+        return JSONResponse({"error": "Invalid or expired token"}, status_code=401)
+
+    return await call_next(request)
 
 
 # ── /databases — populates the Active Database dropdown in the UI ─────────────

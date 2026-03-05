@@ -10,9 +10,25 @@
   <link rel="stylesheet" href="./styles.css" />
   <script src="https://cdn.jsdelivr.net/npm/marked@13/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+  <!-- Firebase compat SDK -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 </head>
 <body>
-<div class="app-shell">
+
+<!-- AUTH OVERLAY — shown until user signs in -->
+<div id="authOverlay" class="auth-overlay">
+  <div class="auth-card">
+    <div class="auth-logo">✦</div>
+    <div class="auth-title">Agentic RAG</div>
+    <p class="auth-subtitle">Powered by Gemini &amp; Google ADK</p>
+    <button id="signInBtn" class="auth-sign-in-btn">
+      <span class="google-g">G</span>Sign in with Google
+    </button>
+  </div>
+</div>
+
+<div class="app-shell" id="appShell" style="display:none">
 
   <!-- HEADER -->
   <header class="app-header">
@@ -24,6 +40,11 @@
         </svg>
       </button>
       <span class="app-title">Agentic RAG</span>
+      <!-- Tab Navigation -->
+      <nav class="tab-nav" aria-label="App sections">
+        <button class="tab-btn active" data-tab="rag" aria-label="RAG Chat">Chat</button>
+        <button class="tab-btn" data-tab="support" aria-label="Support">🛠 Support</button>
+      </nav>
     </div>
     <div class="header-right">
       <div class="topbar-db">
@@ -33,6 +54,13 @@
           <option value="">– select –</option>
         </select>
         <div id="dbBadge" class="db-badge" style="display:none"></div>
+      </div>
+      <!-- User pill (hidden until signed in) -->
+      <div id="userPill" class="user-pill" style="display:none">
+        <span id="userAvatar" class="user-avatar">U</span>
+        <span id="userEmail" class="user-email"></span>
+        <span id="adminBadge" class="admin-badge" style="display:none">Admin</span>
+        <button id="signOutBtn" class="sign-out-btn" title="Sign out" aria-label="Sign out">↪</button>
       </div>
       <button id="themeToggle" class="icon-btn theme-btn" title="Toggle theme" aria-label="Toggle theme">🌙</button>
     </div>
@@ -66,24 +94,45 @@
     </div>
   </div>
 
-  <!-- CHAT -->
-  <main id="chat" class="chat-area" aria-live="polite"></main>
-
-  <!-- COMPOSER -->
-  <div class="composer">
-    <form id="chatForm" class="composer-form" autocomplete="off">
-      <textarea id="prompt" class="composer-input" rows="1"
-        placeholder="Ask a question… (Enter to send · Shift+Enter for new line)"></textarea>
-      <button id="sendBtn" type="submit" class="send-btn" aria-label="Send">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-          <line x1="22" y1="2" x2="11" y2="13"/>
-          <polygon points="22 2 15 22 11 13 2 9 22 2"/>
-        </svg>
-      </button>
-    </form>
+  <!-- RAG CHAT VIEW -->
+  <div id="view-rag" class="tab-view active">
+    <main id="chat" class="chat-area" aria-live="polite"></main>
+    <div class="composer">
+      <form id="chatForm" class="composer-form" autocomplete="off">
+        <textarea id="prompt" class="composer-input" rows="1"
+          placeholder="Ask a question… (Enter to send · Shift+Enter for new line)"></textarea>
+        <button id="sendBtn" type="submit" class="send-btn" aria-label="Send">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="22" y1="2" x2="11" y2="13"/>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+          </svg>
+        </button>
+      </form>
+    </div>
   </div>
 
-</div><!-- /.app-shell -->
+  <!-- SUPPORT VIEW -->
+  <div id="view-support" class="tab-view">
+    <div class="support-intro">
+      <p>Describe an issue you're experiencing and the Support Agent will investigate the code,
+      open a fix PR, and deploy it if the root cause is confirmed.</p>
+    </div>
+    <main id="support-chat" class="chat-area" aria-live="polite"></main>
+    <div class="composer">
+      <form id="supportForm" class="composer-form" autocomplete="off">
+        <textarea id="support-prompt" class="composer-input" rows="1"
+          placeholder="Describe your issue… (Enter to send · Shift+Enter for new line)"></textarea>
+        <button id="supportSendBtn" type="submit" class="send-btn" aria-label="Send">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="22" y1="2" x2="11" y2="13"/>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+          </svg>
+        </button>
+      </form>
+    </div>
+  </div><!-- /.tab-view #view-support -->
+
+</div><!-- /.app-shell #appShell -->
 
 <template id="msgTemplate">
   <article class="msg">
@@ -95,6 +144,8 @@
   </article>
 </template>
 
+<script src="./auth.js"></script>
 <script src="./app.js"></script>
+<script src="./support.js"></script>
 </body>
 </html>
