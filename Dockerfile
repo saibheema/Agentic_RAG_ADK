@@ -1,11 +1,11 @@
 # ── Agentic RAG — Cloud Run image ───────────────────────────────────────────
 # Build: docker build -t agentic-rag .
 # Deployed via:  gcloud run deploy agentic-rag --source .
-# Python 3.12, ADK 1.5.0, connects to Cloud SQL (PG) + Youngsinc SQL Server
+# Python 3.12, ADK 1.5.0, connects to Youngsinc SQL Server via Cloud VPN relay
 # ─────────────────────────────────────────────────────────────────────────────
 FROM python:3.12-slim
 
-# System deps for pymssql (FreeTDS) and pg8000 (pure Python, no native deps)
+# System deps for pymssql (FreeTDS)
 RUN apt-get update && apt-get install -y --no-install-recommends \
         freetds-dev \
         libssl-dev \
@@ -30,7 +30,6 @@ RUN pip install --no-cache-dir \
         "firebase-admin>=6.5.0" \
         "requests>=2.32.0" \
         pymssql \
-        pg8000 \
         "google-adk==1.5.0" \
         "google-genai>=1.23.0" \
         "google-cloud-aiplatform>=1.74.0" \

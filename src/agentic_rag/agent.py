@@ -149,7 +149,6 @@ def _db_config(alias: str = "") -> dict[str, Any]:
                 "database": conn.get("database", ""),
                 "host": conn.get("host", "127.0.0.1"),
                 "port": int(conn.get("port", default_port)),
-                "instance_connection_name": conn.get("instance_connection_name", ""),
                 "max_rows": int(os.environ.get("TEXT_TO_SQL_MAX_ROWS", "200")),
                 "query_timeout_ms": int(os.environ.get("TEXT_TO_SQL_QUERY_TIMEOUT_MS", "15000")),
                 "allowed_tables": [
@@ -169,7 +168,6 @@ def _db_config(alias: str = "") -> dict[str, Any]:
         "database": os.environ.get("DB_NAME", "agentic_rag"),
         "host": os.environ.get("DB_HOST", "127.0.0.1"),
         "port": int(os.environ.get("DB_PORT", str(default_port))),
-        "instance_connection_name": os.environ.get("DB_INSTANCE_CONNECTION_NAME", ""),
         "max_rows": int(os.environ.get("TEXT_TO_SQL_MAX_ROWS", "200")),
         "query_timeout_ms": int(os.environ.get("TEXT_TO_SQL_QUERY_TIMEOUT_MS", "15000")),
         "allowed_tables": [
@@ -178,46 +176,6 @@ def _db_config(alias: str = "") -> dict[str, Any]:
             if table.strip()
         ],
     }
-
-
-def _connect_postgres(cfg: dict[str, Any]):
-    """Connect to PostgreSQL via pg8000 (Cloud SQL Auth Proxy aware)."""
-    import pg8000
-
-    instance = cfg["instance_connection_name"]
-    if instance:
-        socket_dir = f"/cloudsql/{instance}"
-        try:
-            return pg8000.connect(
-                user=cfg["user"],
-                password=cfg["password"],
-                database=cfg["database"],
-                host="127.0.0.1",
-                port=5432,
-            )
-        except Exception:
-            try:
-                return pg8000.connect(
-                    user=cfg["user"],
-                    password=cfg["password"],
-                    database=cfg["database"],
-                    unix_sock=socket_dir,
-                )
-            except Exception:
-                return pg8000.connect(
-                    user=cfg["user"],
-                    password=cfg["password"],
-                    database=cfg["database"],
-                    unix_sock=f"{socket_dir}/.s.PGSQL.5432",
-                )
-
-    return pg8000.connect(
-        user=cfg["user"],
-        password=cfg["password"],
-        database=cfg["database"],
-        host=cfg["host"],
-        port=cfg["port"],
-    )
 
 
 def _connect_mssql(cfg: dict[str, Any]):
@@ -240,7 +198,7 @@ def _connect(cfg: dict[str, Any] | None = None):
         cfg = _db_config()
     if _is_mssql_type(cfg["db_type"]):
         return _connect_mssql(cfg)
-    return _connect_postgres(cfg)
+    raise ValueError(f"Unsupported db_type: {cfg['db_type']!r}. Only 'mssql' is supported.")
 
 
 def _to_rows(cursor) -> list[dict[str, Any]]:

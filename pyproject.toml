@@ -12,7 +12,6 @@ dependencies = [
   "google-adk==1.5.0",
   "google-genai>=1.23.0",
   "google-cloud-aiplatform>=1.74.0",
-  "pg8000>=1.31.2",
   "pydantic>=2.8.0",
   "pydantic-settings>=2.4.0",
 ]
