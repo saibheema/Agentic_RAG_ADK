@@ -195,11 +195,20 @@ function isLocalOrigin() {
   return base.includes('localhost') || base.includes('127.0.0.1');
 }
 
+/** Returns Authorization header object for the current signed-in user, or {}. */
+async function getAuthHeaders() {
+  if (typeof window.Auth === 'undefined') return {};
+  const token = await window.Auth.getIdToken();
+  if (!token) return {};
+  return { 'Authorization': `Bearer ${token}` };
+}
+
 async function fetchDatabases() {
   try {
     const base = (el.apiBase.value.trim() || state.apiBase || '').replace(/\/$/, '');
     const url = base ? `${base}/databases` : '/databases';
-    const res = await fetch(url);
+    const authHeaders = await getAuthHeaders();
+    const res = await fetch(url, { headers: authHeaders });
     if (!res.ok) return;
     const data = await res.json();
     const allConnections = data.connections || [];
@@ -234,9 +243,10 @@ async function fetchDatabases() {
 async function createSession() {
   saveSettings();
   const url = `${state.apiBase}/apps/${encodeURIComponent(state.appName)}/users/${encodeURIComponent(state.userId)}/sessions`;
+  const authHeaders = await getAuthHeaders();
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders },
     body: JSON.stringify(state.dbAlias ? { state: { db_alias: state.dbAlias } } : {}),
   });
 
@@ -479,9 +489,10 @@ async function runPrompt(promptText) {
     await createSession();
   }
 
+  const authHeaders = await getAuthHeaders();
   const res = await fetch(`${state.apiBase}/run`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...authHeaders },
     body: JSON.stringify({
       appName: state.appName,
       userId: state.userId,
@@ -605,6 +616,25 @@ el.apiBase.addEventListener('change', () => {
     document.documentElement.dataset.theme = next;
     localStorage.setItem('theme', next);
     btn.textContent = next === 'dark' ? '☀️' : '🌙';
+  });
+})();
+
+/* ── Tab Navigation ──────────────────────────────────────── */
+(function initTabs() {
+  const tabBtns   = document.querySelectorAll('.tab-btn');
+  const tabViews  = document.querySelectorAll('.tab-view');
+  const dbBar     = document.querySelector('.topbar-db');
+  const settPanel = document.getElementById('settingsPanel');
+
+  tabBtns.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const tab = btn.dataset.tab;
+      tabBtns.forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
+      tabViews.forEach((v) => v.classList.toggle('active', v.id === `view-${tab}`));
+      if (dbBar)    dbBar.style.display = tab === 'rag' ? '' : 'none';
+      if (settPanel && tab !== 'rag') settPanel.classList.remove('open');
+      window.dispatchEvent(new CustomEvent('tab-changed', { detail: { tab } }));
+    });
   });
 })();
 
