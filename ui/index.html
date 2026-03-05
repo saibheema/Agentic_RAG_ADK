@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Agentic RAG Chat</title>
+  <title>Agentic RAG</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
@@ -16,123 +16,161 @@
 </head>
 <body>
 
-<!-- AUTH OVERLAY — shown until user signs in -->
+<!-- AUTH OVERLAY -->
 <div id="authOverlay" class="auth-overlay">
   <div class="auth-card">
-    <div class="auth-logo">✦</div>
+    <div class="auth-logo">&#10022;</div>
     <div class="auth-title">Agentic RAG</div>
-    <p class="auth-subtitle">Powered by Gemini &amp; Google ADK</p>
+    <p class="auth-subtitle">Intelligent data access system</p>
     <button id="signInBtn" class="auth-sign-in-btn">
       <span class="google-g">G</span>Sign in with Google
     </button>
   </div>
 </div>
 
+<!-- APP SHELL: sidebar + main -->
 <div class="app-shell" id="appShell" style="display:none">
 
-  <!-- HEADER -->
-  <header class="app-header">
-    <div class="header-left">
-      <button id="settingsToggle" class="icon-btn" title="Settings" aria-label="Toggle settings">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="3"/>
-          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+  <!-- SIDEBAR -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-brand">
+        <span class="sidebar-logo">&#10022;</span>
+        <span class="sidebar-name">Agentic RAG</span>
+      </div>
+      <button id="sidebarCollapseBtn" class="icon-btn sidebar-collapse-btn" title="Collapse sidebar" aria-label="Collapse sidebar">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="15 18 9 12 15 6"/>
         </svg>
       </button>
-      <span class="app-title">Agentic RAG</span>
-      <!-- Tab Navigation -->
-      <nav class="tab-nav" aria-label="App sections">
-        <button class="tab-btn active" data-tab="rag" aria-label="RAG Chat">Chat</button>
-        <button class="tab-btn" data-tab="support" aria-label="Support">🛠 Support</button>
-      </nav>
     </div>
-    <div class="header-right">
-      <div class="topbar-db">
-        <span class="db-dot"></span>
-        <label class="db-label" for="dbAlias">DB</label>
-        <select id="dbAlias" class="topbar-db-select">
-          <option value="">– select –</option>
-        </select>
-        <div id="dbBadge" class="db-badge" style="display:none"></div>
-      </div>
-      <!-- User pill (hidden until signed in) -->
-      <div id="userPill" class="user-pill" style="display:none">
+
+    <nav class="sidebar-nav" aria-label="App sections">
+      <button class="sidebar-nav-item active" data-tab="rag">
+        <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+        </svg>
+        <span class="nav-label">Chat</span>
+      </button>
+      <button class="sidebar-nav-item" data-tab="support">
+        <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>
+        </svg>
+        <span class="nav-label">Support</span>
+      </button>
+    </nav>
+
+    <div class="sidebar-spacer"></div>
+
+    <!-- DB Selector -->
+    <div class="sidebar-db topbar-db">
+      <span class="db-dot"></span>
+      <label class="db-label" for="dbAlias">DB</label>
+      <select id="dbAlias" class="topbar-db-select">
+        <option value="">&ndash; select &ndash;</option>
+      </select>
+      <div id="dbBadge" class="db-badge" style="display:none"></div>
+    </div>
+
+    <!-- Footer: user + controls -->
+    <div class="sidebar-footer">
+      <div id="userPill" class="sidebar-user" style="display:none">
         <span id="userAvatar" class="user-avatar">U</span>
-        <span id="userEmail" class="user-email"></span>
-        <span id="adminBadge" class="admin-badge" style="display:none">Admin</span>
-        <button id="signOutBtn" class="sign-out-btn" title="Sign out" aria-label="Sign out">↪</button>
+        <div class="sidebar-user-text">
+          <span id="userEmail" class="user-email"></span>
+          <span id="adminBadge" class="admin-badge" style="display:none">Admin</span>
+        </div>
+        <button id="signOutBtn" class="sign-out-btn" title="Sign out" aria-label="Sign out">&#x21aa;</button>
       </div>
-      <button id="themeToggle" class="icon-btn theme-btn" title="Toggle theme" aria-label="Toggle theme">🌙</button>
-    </div>
-  </header>
-
-  <!-- SETTINGS PANEL (collapsed by default) -->
-  <div id="settingsPanel" class="settings-panel">
-    <div class="settings-inner">
-      <div class="settings-grid">
-        <label>
-          <span>API Base URL</span>
-          <input id="apiBase" type="url" placeholder="https://… (blank = same origin)" autocomplete="off" spellcheck="false" />
-        </label>
-        <label>
-          <span>App Name</span>
-          <input id="appName" type="text" placeholder="agentic_rag" />
-        </label>
-        <label>
-          <span>User ID</span>
-          <input id="userId" type="text" placeholder="web-user" />
-        </label>
-        <label>
-          <span>Session ID</span>
-          <input id="sessionId" type="text" readonly placeholder="(auto-assigned)" />
-        </label>
-      </div>
-      <div class="settings-actions">
-        <button id="newSessionBtn" type="button">New Session</button>
-        <button id="clearChatBtn" type="button" class="secondary">Clear Chat</button>
+      <div class="sidebar-footer-actions">
+        <button id="themeToggle" class="icon-btn theme-btn" title="Toggle theme" aria-label="Toggle theme">&#x1F319;</button>
       </div>
     </div>
-  </div>
+  </aside>
 
-  <!-- RAG CHAT VIEW -->
-  <div id="view-rag" class="tab-view active">
-    <main id="chat" class="chat-area" aria-live="polite"></main>
-    <div class="composer">
-      <form id="chatForm" class="composer-form" autocomplete="off">
-        <textarea id="prompt" class="composer-input" rows="1"
-          placeholder="Ask a question… (Enter to send · Shift+Enter for new line)"></textarea>
-        <button id="sendBtn" type="submit" class="send-btn" aria-label="Send">
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="22" y1="2" x2="11" y2="13"/>
-            <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+  <!-- MAIN CONTENT -->
+  <div class="main-content">
+
+    <!-- SETTINGS PANEL (collapsed by default) -->
+    <div id="settingsPanel" class="settings-panel">
+      <div class="settings-inner">
+        <div class="settings-grid">
+          <label>
+            <span>API Base URL</span>
+            <input id="apiBase" type="url" placeholder="https://&hellip; (blank = same origin)" autocomplete="off" spellcheck="false" />
+          </label>
+          <label>
+            <span>App Name</span>
+            <input id="appName" type="text" placeholder="agentic_rag" />
+          </label>
+          <label>
+            <span>User ID</span>
+            <input id="userId" type="text" placeholder="web-user" />
+          </label>
+          <label>
+            <span>Session ID</span>
+            <input id="sessionId" type="text" readonly placeholder="(auto-assigned)" />
+          </label>
+        </div>
+        <div class="settings-actions">
+          <button id="newSessionBtn" type="button">New Session</button>
+          <button id="clearChatBtn" type="button" class="secondary">Clear Chat</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- RAG CHAT VIEW -->
+    <div id="view-rag" class="tab-view active">
+      <div class="view-header">
+        <span class="view-title">Chat</span>
+        <button id="settingsToggle" class="icon-btn" title="Settings" aria-label="Toggle settings">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
           </svg>
         </button>
-      </form>
+      </div>
+      <main id="chat" class="chat-area" aria-live="polite"></main>
+      <div class="composer">
+        <form id="chatForm" class="composer-form" autocomplete="off">
+          <textarea id="prompt" class="composer-input" rows="1"
+            placeholder="Ask a question&hellip; (Enter to send &middot; Shift+Enter for new line)"></textarea>
+          <button id="sendBtn" type="submit" class="send-btn" aria-label="Send">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13"/>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+            </svg>
+          </button>
+        </form>
+      </div>
     </div>
-  </div>
 
-  <!-- SUPPORT VIEW -->
-  <div id="view-support" class="tab-view">
-    <div class="support-intro">
-      <p>Describe an issue you're experiencing and the Support Agent will investigate the code,
-      open a fix PR, and deploy it if the root cause is confirmed.</p>
+    <!-- SUPPORT VIEW -->
+    <div id="view-support" class="tab-view">
+      <div class="view-header">
+        <span class="view-title">Support</span>
+      </div>
+      <div class="support-intro">
+        <p>Describe an issue you're experiencing and the Support Agent will investigate the code, open a fix PR, and deploy it if the root cause is confirmed.</p>
+      </div>
+      <main id="support-chat" class="chat-area" aria-live="polite"></main>
+      <div class="composer">
+        <form id="supportForm" class="composer-form" autocomplete="off">
+          <textarea id="support-prompt" class="composer-input" rows="1"
+            placeholder="Describe your issue&hellip; (Enter to send &middot; Shift+Enter for new line)"></textarea>
+          <button id="supportSendBtn" type="submit" class="send-btn" aria-label="Send">
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="22" y1="2" x2="11" y2="13"/>
+              <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+            </svg>
+          </button>
+        </form>
+      </div>
     </div>
-    <main id="support-chat" class="chat-area" aria-live="polite"></main>
-    <div class="composer">
-      <form id="supportForm" class="composer-form" autocomplete="off">
-        <textarea id="support-prompt" class="composer-input" rows="1"
-          placeholder="Describe your issue… (Enter to send · Shift+Enter for new line)"></textarea>
-        <button id="supportSendBtn" type="submit" class="send-btn" aria-label="Send">
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="22" y1="2" x2="11" y2="13"/>
-            <polygon points="22 2 15 22 11 13 2 9 22 2"/>
-          </svg>
-        </button>
-      </form>
-    </div>
-  </div><!-- /.tab-view #view-support -->
 
-</div><!-- /.app-shell #appShell -->
+  </div><!-- /.main-content -->
+
+</div><!-- /.app-shell -->
 
 <template id="msgTemplate">
   <article class="msg">
