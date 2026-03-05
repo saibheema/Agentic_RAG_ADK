@@ -50,7 +50,7 @@ _PII_ENABLED = os.environ.get("PII_MASKING_ENABLED", "true").lower() in (
 )
 _PII_RULES = [
     r.strip()
-    for r in os.environ.get("PII_DEFAULT_RULES", "name,ssn,email").split(",")
+    for r in os.environ.get("PII_DEFAULT_RULES", "phone,email").split(",")
     if r.strip()
 ]
 
@@ -81,13 +81,22 @@ def _masker():
 
 
 def _mask_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Apply PII masking to string values in result rows."""
+    """Apply PII masking only to contact columns (phone/email).
+
+    Only columns whose name contains a contact keyword (email, phone, mobile,
+    etc.) are masked. All other columns — names, descriptions, products,
+    companies — pass through unchanged so the LLM sees real data.
+    """
     m = _masker()
     if not m or not _PII_RULES:
         return rows
+    try:
+        from agentic_rag.pii_masking import is_contact_column
+    except ImportError:
+        return rows
     for row in rows:
         for key, value in row.items():
-            if isinstance(value, str):
+            if isinstance(value, str) and is_contact_column(key):
                 row[key] = m.mask_text(value, _PII_RULES)
     return rows
 
@@ -397,7 +406,10 @@ def get_schema_metadata(tool_context: ToolContext) -> dict[str, Any]:
         if entry and (time.time() - entry["fetched_at"]) < _SCHEMA_CACHE_TTL:
             age_h = (time.time() - entry["fetched_at"]) / 3600
             _log.debug("Schema cache hit (age %.1fh, TTL %dh)", age_h, _SCHEMA_CACHE_TTL // 3600)
-            return entry["data"]  # type: ignore[return-value]
+            # Always inject a fresh 'today' — never serve a cached date
+            cached = dict(entry["data"])
+            cached["today"] = datetime.date.today().isoformat()
+            return cached  # type: ignore[return-value]
 
     conn = _connect()
     try:
@@ -475,6 +487,9 @@ def get_schema_metadata(tool_context: ToolContext) -> dict[str, Any]:
         }
         sql_dialect = _DIALECT_LABEL.get(cfg["db_type"].lower(), cfg["db_type"])
 
+        # NOTE: 'today' is intentionally NOT stored in the cache. It is
+        # injected fresh on every return so date-relative queries always use
+        # the actual current date, never a stale cached date.
         result: dict[str, Any] = {
             "tables": [
                 {
@@ -486,10 +501,9 @@ def get_schema_metadata(tool_context: ToolContext) -> dict[str, Any]:
             ],
             "active_db": db_alias or "env-config",
             "db_type": sql_dialect,
-            "today": datetime.date.today().isoformat(),
         }
 
-        # ── Populate cache ───────────────────────────────────────────────────
+        # ── Populate cache (without today) ───────────────────────────────────
         if _SCHEMA_CACHE_TTL > 0:
             _schema_cache[cache_key] = {"data": result, "fetched_at": time.time()}
             _log.debug(
@@ -500,6 +514,7 @@ def get_schema_metadata(tool_context: ToolContext) -> dict[str, Any]:
                 _SCHEMA_CACHE_TTL // 3600,
             )
 
+        result["today"] = datetime.date.today().isoformat()
         return result
     finally:
         conn.close()
@@ -691,6 +706,18 @@ database_agent = LlmAgent(
         "NEVER generate function calls other than these two tools.\n"
         "- The 'sql' parameter of run_readonly_sql must contain a SQL query "
         "string — never programming code.\n\n"
+        "## DATE & YEAR RULES — MANDATORY\n"
+        "get_schema_metadata always returns a 'today' field with the real "
+        "current date (e.g. '2026-03-05'). Derive ALL date references from "
+        "this value — NEVER use your training knowledge for year/date logic:\n"
+        "- 'this year' / 'current year'  → YEAR(today)      e.g. 2026\n"
+        "- 'last year'                   → YEAR(today) - 1  e.g. 2025\n"
+        "- 'year before last'            → YEAR(today) - 2  e.g. 2024\n"
+        "- 'this month'                  → MONTH+YEAR of today\n"
+        "- 'last month'                  → previous calendar month\n"
+        "For T-SQL: use YEAR(col), DATEPART(year, col), or date range "
+        "col >= '2025-01-01' AND col < '2026-01-01'.\n"
+        "NEVER hardcode a year literal. ALWAYS compute from 'today'.\n\n"
         "## FOLLOW-UP QUESTIONS\n"
         "When the user sends a short follow-up like 'which are pending' or "
         "'show me the top 5', refer to the previous conversation to determine "
@@ -699,9 +726,10 @@ database_agent = LlmAgent(
         "get_schema_metadata first if you haven't already in this turn.\n\n"
         "## WORKFLOW\n"
         "1. ALWAYS call get_schema_metadata first — it returns 'db_type' "
-        "(the database engine), 'tables' with columns and sample_rows "
-        "(use these to discover real filter values and column names), and "
-        "'today' (use for date-relative queries).\n"
+        "(the SQL dialect), 'tables' with columns and sample_rows "
+        "(inspect sample_rows to discover real filter values, date formats, "
+        "and actual column contents before writing SQL), and 'today' "
+        "(use this — not your training data — for all date logic).\n"
         "2. Write a read-only SELECT query in the correct SQL dialect for "
         "the returned 'db_type', then call run_readonly_sql.\n"
         "3. If run_readonly_sql returns ok=false, fix the SQL and retry once.\n"

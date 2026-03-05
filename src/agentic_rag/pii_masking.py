@@ -5,7 +5,16 @@ from dataclasses import dataclass, field
 
 
 EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
-SSN_RE = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
+# Phone: matches +1-800-555-1234 / (800) 555-1234 / 800.555.1234 / 8005551234
+PHONE_RE = re.compile(
+    r"(\+?1[\s.\-]?)?(\(?\d{3}\)?[\s.\-]?)\d{3}[\s.\-]?\d{4}"
+)
+
+# Column name fragments that indicate the value is a direct-contact field.
+# Only columns matching these keywords have phone/email masking applied.
+_CONTACT_COLUMN_KEYWORDS = (
+    "email", "phone", "mobile", "cell", "fax", "contact", "tel",
+)
 
 
 @dataclass(slots=True)
@@ -35,14 +44,11 @@ class PIIMasker:
             for found in set(EMAIL_RE.findall(masked)):
                 masked = masked.replace(found, self._tokenize(found, "EMAIL"))
 
-        if "ssn" in lowered:
-            for found in set(SSN_RE.findall(masked)):
-                masked = masked.replace(found, self._tokenize(found, "SSN"))
-
-        if "name" in lowered:
-            name_like = re.findall(r"\b[A-Z][a-z]+\s+[A-Z][a-z]+\b", masked)
-            for found in set(name_like):
-                masked = masked.replace(found, self._tokenize(found, "PERSON"))
+        if "phone" in lowered:
+            for m in list(PHONE_RE.finditer(masked)):
+                raw = m.group(0).strip()
+                if raw:
+                    masked = masked.replace(raw, self._tokenize(raw, "PHONE"))
 
         return masked
 
@@ -67,3 +73,9 @@ class PIIMasker:
                 return self._mask_with_fallback(text, pii_rules)
 
         return self._mask_with_fallback(text, pii_rules)
+
+
+def is_contact_column(column_name: str) -> bool:
+    """Return True only if the column name suggests it holds contact info."""
+    col = column_name.lower()
+    return any(kw in col for kw in _CONTACT_COLUMN_KEYWORDS)
