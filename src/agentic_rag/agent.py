@@ -315,6 +315,18 @@ def _inject_limit_if_missing(sql: str, max_rows: int, db_type: str = "") -> str:
     actual_type = db_type or _DB_TYPE
     normalized = _normalized_sql(sql).lower()
 
+    # Never inject a row limit on aggregate queries:
+    # • GROUP BY queries: TOP N would silently drop groups, giving wrong totals.
+    # • Scalar aggregates (SUM/COUNT/AVG/MIN/MAX with no GROUP BY): always
+    #   return exactly 1 row, so a limit is meaningless.
+    # In both cases the LLM should control the result shape explicitly.
+    _has_group_by = bool(re.search(r'\bgroup\s+by\b', normalized, re.IGNORECASE))
+    _has_scalar_agg = bool(
+        re.search(r'\b(SUM|COUNT|AVG|MIN|MAX)\s*\(', normalized, re.IGNORECASE)
+    )
+    if _has_group_by or _has_scalar_agg:
+        return sql
+
     if _is_mssql_type(actual_type):
         # SQL Server uses TOP N — syntax: SELECT [DISTINCT] TOP N ...
         if " top " in f" {normalized} ":
@@ -709,16 +721,19 @@ database_agent = LlmAgent(
         "string — never programming code.\n\n"
         "## DATE & YEAR RULES — MANDATORY\n"
         "get_schema_metadata always returns a 'today' field with the real "
-        "current date (e.g. '2026-03-05'). Derive ALL date references from "
-        "this value — NEVER use your training knowledge for year/date logic:\n"
+        "current date (e.g. '2026-03-05').\n"
+        "RULE 1 — Explicit user year: if the user says a specific year "
+        "(e.g. '2025', '2024'), use that exact year literal in the SQL. "
+        "Do NOT second-guess or recompute it.\n"
+        "RULE 2 — Relative references: derive from 'today' — NEVER from "
+        "training knowledge:\n"
         "- 'this year' / 'current year'  → YEAR(today)      e.g. 2026\n"
         "- 'last year'                   → YEAR(today) - 1  e.g. 2025\n"
         "- 'year before last'            → YEAR(today) - 2  e.g. 2024\n"
         "- 'this month'                  → MONTH+YEAR of today\n"
         "- 'last month'                  → previous calendar month\n"
         "For T-SQL: use YEAR(col), DATEPART(year, col), or date range "
-        "col >= '2025-01-01' AND col < '2026-01-01'.\n"
-        "NEVER hardcode a year literal. ALWAYS compute from 'today'.\n\n"
+        "col >= '2025-01-01' AND col < '2026-01-01'.\n\n"
         "## FOLLOW-UP QUESTIONS\n"
         "When the user sends a short follow-up like 'which are pending' or "
         "'show me the top 5', refer to the previous conversation to determine "
@@ -727,12 +742,17 @@ database_agent = LlmAgent(
         "get_schema_metadata first if you haven't already in this turn.\n\n"
         "## WORKFLOW\n"
         "1. ALWAYS call get_schema_metadata first — it returns 'db_type' "
-        "(the SQL dialect), 'tables' with columns and sample_rows "
-        "(inspect sample_rows to discover real filter values, date formats, "
-        "and actual column contents before writing SQL), and 'today' "
-        "(use this — not your training data — for all date logic).\n"
+        "(the SQL dialect), 'tables' with columns and sample_rows, and "
+        "'today' (use this — not your training data — for all date logic).\n"
+        "   sample_rows show column FORMAT and example values only — "
+        "they are NOT a complete census of the data. NEVER conclude that "
+        "data is missing or a year has no records based on sample_rows. "
+        "You MUST run run_readonly_sql to get real answers.\n"
         "2. Write a read-only SELECT query in the correct SQL dialect for "
         "the returned 'db_type', then call run_readonly_sql.\n"
+        "   For aggregate queries (SUM, COUNT, AVG, GROUP BY) do NOT add "
+        "TOP or LIMIT — the result is already bounded by the aggregation. "
+        "Only add TOP / LIMIT N when fetching raw rows.\n"
         "3. If run_readonly_sql returns ok=false, fix the SQL and retry once.\n"
         "4. Never invent data — rely only on tool outputs.\n"
         "5. Present results clearly: use markdown tables for tabular data "
