@@ -23,7 +23,6 @@ class AppSettings(BaseSettings):
     # ── Database ───────────────────────────────────────────────
     # DB_TYPE: "postgres" (default) or "mssql" for SQL Server
     db_type: str = Field(default="postgres", alias="DB_TYPE")
-    db_instance_connection_name: str = Field(default="", alias="DB_INSTANCE_CONNECTION_NAME")
     db_name: str = Field(default="agentic_rag", alias="DB_NAME")
     db_user: str = Field(default="app_user", alias="DB_USER")
     db_password: str = Field(default="", alias="DB_PASSWORD")
