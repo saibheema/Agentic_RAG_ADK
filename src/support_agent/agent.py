@@ -474,6 +474,69 @@ def create_github_issue(
     }
 
 
+def bump_issue_request_count(issue_number: int, user_context: str = "") -> dict:
+    """Increment the request counter on an existing enhancement GitHub issue.
+
+    Call this when the current user's report matches an already-open enhancement issue.
+    It avoids creating a duplicate and signals demand to the team by updating a visible
+    counter in the issue body and adding a comment with the user's context.
+
+    Args:
+        issue_number: Existing open GitHub issue number to update.
+        user_context: 1–2 sentence summary of THIS user's specific use-case / motivation.
+                      Added as a comment on the issue; never shown to the end-user.
+    """
+    # Read the current issue
+    issue = _gh("GET", f"/repos/{_REPO_OWNER}/{_REPO_NAME}/issues/{issue_number}")
+    if isinstance(issue, dict) and issue.get("ok") is False:
+        return issue
+
+    current_body = issue.get("body") or ""
+
+    # Parse the hidden counter marker (starts at 1 = the original reporter)
+    count_match = re.search(r"<!-- requests:(\d+) -->", current_body)
+    old_count = int(count_match.group(1)) if count_match else 1
+    new_count = old_count + 1
+
+    counter_section = (
+        f"<!-- requests:{new_count} -->\n"
+        f"**\U0001f465 User Requests: {new_count}** — {new_count} users have reported this request."
+    )
+    if count_match:
+        updated_body = re.sub(
+            r"<!-- requests:\d+ -->\n\*\*\U0001f465 User Requests: \d+\*\*[^\n]*",
+            counter_section,
+            current_body,
+        )
+    else:
+        updated_body = current_body.rstrip() + "\n\n" + counter_section
+
+    patch_result = _gh(
+        "PATCH",
+        f"/repos/{_REPO_OWNER}/{_REPO_NAME}/issues/{issue_number}",
+        json={"body": updated_body},
+    )
+    if isinstance(patch_result, dict) and patch_result.get("ok") is False:
+        return patch_result
+
+    comment_body = (
+        f"**\U0001f4e5 Duplicate request received** (total requests: {new_count})\n\n"
+        + (f"User context: {user_context}" if user_context else "(no additional context)")
+    )
+    _gh(
+        "POST",
+        f"/repos/{_REPO_OWNER}/{_REPO_NAME}/issues/{issue_number}/comments",
+        json={"body": comment_body},
+    )
+
+    return {
+        "ok": True,
+        "issue_number": issue_number,
+        "new_count": new_count,
+        "issue_url": issue.get("html_url", ""),
+    }
+
+
 # ── Tool: search GCP Cloud Logging ───────────────────────────────────────────
 
 _GCP_PROJECT_ID = os.environ.get("GCP_PROJECT_ID", "unicon-494419")
@@ -653,14 +716,23 @@ Users report problems they experience. Your job: investigate, classify, and reso
 Before doing ANYTHING else, call `list_open_issues` and `list_open_pull_requests`
 with keywords from the user's message to check for existing work.
 
-- If an **open issue** already covers this exact problem → tell the user:
+- If an **open issue** already covers this EXACT **bug** → tell the user:
   "Thanks for letting us know! We're already looking into this one. You can quote reference **#N**
   if you need to follow up — our team is on it."
   Then stop — do NOT create another issue or PR.
+
+- If an **open issue** already covers this EXACT **enhancement** →
+  1. Call `bump_issue_request_count(issue_number=N, user_context="<1-2 sentence summary of the user's specific need>")` to increment the priority counter.
+  2. Tell the user (plain language only):
+     "This is already on our list! I've noted your request to help us prioritise it.
+     Quote reference **#N** if you'd like to follow up — we'll keep you in the loop."
+  Then stop — do NOT create another issue.
+
 - If an **open PR** already addresses this exact problem → tell the user:
   "Good news — we already have a fix in progress for this. It should be available shortly.
   Quote reference **#N** if you need to follow up."
   Then stop.
+
 - If existing work is **related but not identical** → mention it, then continue with the normal flow
   and cross-reference the existing issue/PR in any new issue/PR body.
 
@@ -672,6 +744,9 @@ Read the user's message carefully. Classify as ONE of:
   e.g. "503 model busy", "rate limit", "model overloaded", "AI is unavailable", "timeout",
   "service unavailable". These are NOT code bugs. → Skip ALL investigation steps, go straight
   to the transient_error response (see Step 2T below).
+- **capability_question**: User is asking what the application can do, what features exist,
+  what is supported, or whether a capability exists (e.g. "can you do X?", "what features do
+  you have?", "does this support Y?"). → Go to Step 2A-CAP.
 - **bug**: The code produces wrong output (wrong SQL, wrong date filter, wrong result, error/crash)
 - **enhancement**: User wants NEW behaviour or a feature that doesn't exist yet
 - **usage_question**: User is confused about how to use an existing feature
@@ -724,6 +799,33 @@ If no logs were found, write: "No matching logs found in the last 24h — issue 
 or the user's session predates the search window."
 
 ---
+## STEP 2A-CAP — capability_question
+
+The user wants to know what the Agentic RAG application can do.
+Respond with a clear, plain-language summary of current capabilities, then offer to
+raise an enhancement request if something is missing.
+
+Use this template (adapt wording naturally):
+
+---
+Here's what I can help with right now:
+
+- **Answering questions about your data** — Ask anything in plain English and I'll query your connected databases to find the answer.
+- **Looking up contact and account information** — Names, emails, phone numbers, company details, and relationships.
+- **Filtering and summarising records** — By date, salesperson, region, status, or any field in your data.
+- **Reporting summaries** — Totals, averages, and counts across your data.
+- **Raising support tickets** — If something isn't working, describe the problem and I'll log it for the team.
+
+Is there something specific you were hoping the app could do that's not on this list?
+If so, I'd be happy to put in a feature request on your behalf!
+---
+
+If the user then describes a missing capability, treat it as an **enhancement** and proceed
+to Step 2B.
+
+Do NOT create any PRs or GitHub issues for capability_question alone.
+
+---
 ## STEP 2A — usage_question
 
 Answer directly in plain, conversational language. You may call `read_repo_file` and
@@ -734,14 +836,22 @@ Do NOT create any PRs or GitHub issues.
 ---
 ## STEP 2B — enhancement OR ambiguous
 
+> ⚠️ **CRITICAL RULE — ISSUE ONLY, NEVER A PR**
+> Enhancements are ALWAYS handled via a GitHub Issue. NEVER create a branch, commit, or PR
+> for an enhancement. PRs exist exclusively for confirmed bugs where you have identified
+> the exact root cause AND written a working code fix. If in doubt, create an Issue.
+
 1. Explain clearly why this is an enhancement (not a bug), or what information is missing.
-2. Call `create_github_issue` with:
+2. Initialize the request counter by adding `<!-- requests:1 -->\n**👥 User Requests: 1**` at the
+   end of the issue body — so that future `bump_issue_request_count` calls can increment it.
+3. Call `create_github_issue` with:
    - Title: concise summary
    - Body: user's exact complaint, your analysis, why admin review is needed,
-     and the `### GCP Log Evidence` block from Step 1.5.
+     the `### GCP Log Evidence` block from Step 1.5,
+     and the counter line `<!-- requests:1 -->\n**👥 User Requests: 1** — 1 user has reported this request.`
      If Step 0 found related issues/PRs, cross-reference them here.
    - Labels: ["support/enhancement"] for enhancements; ["support/needs-clarification"] for ambiguous
-3. Tell the user (plain language only — no technical terms, no file names, no labels):
+4. Tell the user (plain language only — no technical terms, no file names, no labels):
    "Thanks for the suggestion! We've noted your request and passed it on to the team.
    Quote reference **#N** if you'd like to follow up — we'll be in touch."
 
@@ -885,5 +995,6 @@ what code was changed — belongs ONLY in the GitHub PR or issue body. Never in 
         FunctionTool(request_copilot_review),
         FunctionTool(merge_pull_request),
         FunctionTool(create_github_issue),
+        FunctionTool(bump_issue_request_count),
     ],
 )
