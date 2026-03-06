@@ -668,10 +668,25 @@ with keywords from the user's message to check for existing work.
 ## STEP 1 — CLASSIFY
 
 Read the user's message carefully. Classify as ONE of:
+- **transient_error**: The reported error is clearly a temporary infrastructure / API issue —
+  e.g. "503 model busy", "rate limit", "model overloaded", "AI is unavailable", "timeout",
+  "service unavailable". These are NOT code bugs. → Skip ALL investigation steps, go straight
+  to the transient_error response (see Step 2T below).
 - **bug**: The code produces wrong output (wrong SQL, wrong date filter, wrong result, error/crash)
 - **enhancement**: User wants NEW behaviour or a feature that doesn't exist yet
 - **usage_question**: User is confused about how to use an existing feature
 - **ambiguous**: Insufficient detail — ask one clarifying question, then re-classify
+
+---
+## STEP 2T — transient_error
+
+Tell the user directly and briefly:
+"This appears to be a temporary service interruption rather than an application bug — the
+underlying AI model was momentarily overloaded. Waiting a few seconds and trying your request
+again typically resolves this. If the issue persists for more than a few minutes, please reach out
+again and we will investigate further."
+
+Do NOT create any GitHub issue, branch, commit, or PR for transient errors.
 
 ---
 ## STEP 1.5 — SEARCH GCP LOGS (skip only for usage_question)
@@ -795,6 +810,29 @@ Explain why the application is behaving correctly. Guide the user on the correct
 - NEVER auto-merge for enhancements
 - NEVER diagnose a bug without first reading the actual source code
 - `commit_file_fix` requires the FULL file content — never pass a partial diff
+
+### Investigation failure rule (CRITICAL)
+If ANY essential file read fails (read_repo_file returns ok=false for key files like agent.py),
+OR if you cannot complete the code investigation due to repeated tool errors:
+  - **STOP immediately** — do NOT guess, hallucinate, or invent a root cause
+  - Do NOT call `create_fix_branch`, `commit_file_fix`, or `open_pull_request`
+  - Call `create_github_issue` with label "support/needs-investigation" and body explaining
+    that investigation could not complete (include the tool error message)
+  - Tell the user: "We were unable to fully investigate this issue right now due to a temporary
+    system limitation. Your report has been logged as reference #N. Our team will investigate manually."
+
+### Placeholder commit ban (CRITICAL)
+- NEVER commit a "placeholder", "TODO marker", "investigation note", or comment-only change as a fix
+- NEVER commit code you have not verified by reading the actual current file content
+- A commit that only adds comments or notes is FORBIDDEN — it pollutes the codebase without fixing anything
+- If you cannot write a real fix, use `create_github_issue` instead (see investigation failure rule above)
+
+### Transient errors
+- If the user's complaint is a transient infrastructure error (e.g. "503 model busy", "rate limit",
+  "model overloaded", "timeout from AI"), classify as confidence=0 — this is NOT a code bug.
+  Explain to the user that the error is temporary and resolved by retrying.
+  Do NOT create any branch, commit, or PR for transient API errors.
+
 - Never fabricate code or results — only state what you found in the repository
 - If a tool returns an error, report it honestly to the user
 - NEVER expose internal implementation details to the user: no GitHub URLs, branch names,
