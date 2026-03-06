@@ -632,20 +632,74 @@ el.apiBase.addEventListener('change', () => {
       tabViews.forEach((v) => v.classList.toggle('active', v.id === `view-${tab}`));
       if (settPanel && tab !== 'rag') settPanel.classList.remove('open');
       window.dispatchEvent(new CustomEvent('tab-changed', { detail: { tab } }));
+      // Close mobile sidebar when a nav item is tapped
+      _closeMobileSidebar();
     });
   });
 
-  // Sidebar collapse toggle
+  // Sidebar collapse toggle (desktop) / close (mobile)
   const sidebar   = document.getElementById('sidebar');
   const collapseBtn = document.getElementById('sidebarCollapseBtn');
   if (sidebar && collapseBtn) {
     const saved = localStorage.getItem('sidebarCollapsed') === 'true';
     if (saved) sidebar.classList.add('collapsed');
     collapseBtn.addEventListener('click', () => {
-      sidebar.classList.toggle('collapsed');
-      localStorage.setItem('sidebarCollapsed', sidebar.classList.contains('collapsed'));
+      if (window.innerWidth <= 640) {
+        // On mobile, collapse-arrow means "close"
+        _closeMobileSidebar();
+      } else {
+        sidebar.classList.toggle('collapsed');
+        localStorage.setItem('sidebarCollapsed', sidebar.classList.contains('collapsed'));
+      }
     });
   }
+})();
+
+/* ── Mobile sidebar open / close ────────────────────────── */
+function _isMobile() { return window.innerWidth <= 640; }
+
+function _openMobileSidebar() {
+  const sidebar  = document.getElementById('sidebar');
+  const overlay  = document.getElementById('sidebarOverlay');
+  if (!sidebar || !overlay) return;
+  sidebar.classList.add('mobile-open');
+  overlay.classList.add('visible');
+  document.body.style.overflow = 'hidden'; // prevent background scroll
+}
+
+function _closeMobileSidebar() {
+  const sidebar  = document.getElementById('sidebar');
+  const overlay  = document.getElementById('sidebarOverlay');
+  if (!sidebar || !overlay) return;
+  sidebar.classList.remove('mobile-open');
+  overlay.classList.remove('visible');
+  document.body.style.overflow = '';
+}
+
+(function initMobileSidebar() {
+  const hamburger = document.getElementById('mobileMenuBtn');
+  const overlay   = document.getElementById('sidebarOverlay');
+
+  if (hamburger) {
+    hamburger.addEventListener('click', () => {
+      const sidebar = document.getElementById('sidebar');
+      if (sidebar && sidebar.classList.contains('mobile-open')) {
+        _closeMobileSidebar();
+      } else {
+        _openMobileSidebar();
+      }
+    });
+  }
+
+  // Tap overlay to close
+  if (overlay) {
+    overlay.addEventListener('click', _closeMobileSidebar);
+  }
+
+  // Close on resize back to desktop
+  window.addEventListener('resize', () => {
+    if (!_isMobile()) _closeMobileSidebar();
+  });
 })();
 
 /* ── Settings Panel Toggle ─────────────────────────────── */

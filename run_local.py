@@ -10,6 +10,7 @@ Requires the Docker VPN tunnel running first:
     bash scripts/docker_vpn/run_vpn_tunnel.sh
 """
 
+import datetime
 import os
 import socket
 import sys
@@ -80,6 +81,18 @@ except ImportError:
     _FIREBASE_AVAILABLE = False
 
 _firebase_init_done = False
+_ADMIN_EMAIL = "sbheema@swardesi.com"
+_ONLINE_WINDOW_SEC = 120  # seconds before a user is considered offline
+_firestore_client = None
+
+
+def _get_firestore():
+    """Lazy-init a shared Firestore client."""
+    global _firestore_client
+    if _firestore_client is None:
+        from google.cloud import firestore
+        _firestore_client = firestore.Client(project="unicon-494419")
+    return _firestore_client
 
 
 def _init_firebase_once() -> None:
@@ -115,6 +128,93 @@ async def firebase_auth_middleware(request: Request, call_next):
         return JSONResponse({"error": "Invalid or expired token"}, status_code=401)
 
     return await call_next(request)
+
+
+# ── /ping — presence heartbeat (every 30 s from the UI) ─────────────────────
+@app.post("/ping")
+async def presence_ping(request: Request) -> JSONResponse:
+    """Record that the authenticated user is currently active."""
+    uid = getattr(request.state, "user_uid", "")
+    email = getattr(request.state, "user_email", "")
+    if not uid:
+        return JSONResponse({"ok": False}, status_code=401)
+    try:
+        from google.cloud import firestore
+        db = _get_firestore()
+        db.collection("user_presence").document(uid).set(
+            {"email": email, "lastActive": firestore.SERVER_TIMESTAMP},
+            merge=True,
+        )
+    except Exception as exc:
+        import logging as _lg
+        _lg.getLogger(__name__).warning("Presence ping failed: %s", exc)
+    return JSONResponse({"ok": True})
+
+
+# ── /admin/users — active users + last login (admin only) ─────────────────────
+@app.get("/admin/users")
+async def admin_users(request: Request) -> JSONResponse:
+    """Return all Firebase Auth users with last-login and online status.
+    Restricted to the admin account only."""
+    user_email = getattr(request.state, "user_email", "")
+    if user_email != _ADMIN_EMAIL:
+        return JSONResponse({"error": "Forbidden"}, status_code=403)
+    if not _FIREBASE_AVAILABLE:
+        return JSONResponse({"error": "Firebase Admin not available"}, status_code=503)
+    _init_firebase_once()
+
+    # ── 1. Presence data (Firestore) ─────────────────────────────────────────
+    online_cutoff = datetime.datetime.now(tz=datetime.timezone.utc) - datetime.timedelta(seconds=_ONLINE_WINDOW_SEC)
+    presence: dict[str, dict] = {}
+    try:
+        db = _get_firestore()
+        for doc in db.collection("user_presence").stream():
+            d = doc.to_dict()
+            la = d.get("lastActive")
+            if la is not None:
+                if la.tzinfo is None:
+                    la = la.replace(tzinfo=datetime.timezone.utc)
+                presence[doc.id] = {
+                    "lastActive": la.isoformat(),
+                    "isOnline": la >= online_cutoff,
+                }
+    except Exception as exc:
+        import logging as _lg
+        _lg.getLogger(__name__).warning("Firestore presence read failed: %s", exc)
+
+    # ── 2. Firebase Auth user list ────────────────────────────────────────────
+    users: list[dict] = []
+    try:
+        page = _fb_auth.list_users()
+        while page:
+            for u in page.users:
+                meta = u.user_metadata
+                last_sign_in_ms = getattr(meta, "last_sign_in_time", None) if meta else None
+                last_login_iso: str | None = None
+                if last_sign_in_ms:
+                    try:
+                        last_login_iso = datetime.datetime.fromtimestamp(
+                            last_sign_in_ms / 1000, tz=datetime.timezone.utc
+                        ).isoformat()
+                    except Exception:
+                        pass
+                p = presence.get(u.uid, {})
+                users.append({
+                    "uid": u.uid,
+                    "email": u.email or "",
+                    "displayName": u.display_name or "",
+                    "photoURL": u.photo_url or "",
+                    "lastLogin": last_login_iso,
+                    "lastActive": p.get("lastActive"),
+                    "isOnline": p.get("isOnline", False),
+                    "disabled": u.disabled,
+                })
+            page = page.get_next_page()
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+    users.sort(key=lambda u: u["lastLogin"] or "", reverse=True)
+    return JSONResponse({"users": users, "total": len(users)})
 
 
 # ── /databases — populates the Active Database dropdown in the UI ─────────────

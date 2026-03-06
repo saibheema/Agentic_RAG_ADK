@@ -20,6 +20,29 @@
   }
   const auth = firebase.auth();
   let _currentUser = null;
+  let _pingInterval = null;
+
+  // ── Presence ping ─────────────────────────────────────────────────────────
+  async function _doPing() {
+    if (!_currentUser) return;
+    try {
+      const token = await _currentUser.getIdToken(false);
+      if (!token) return;
+      const base = (localStorage.getItem('apiBase') || '').replace(/\/$/, '');
+      const url = base ? `${base}/ping` : '/ping';
+      await fetch(url, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+    } catch { /* ignore ping errors */ }
+  }
+
+  function _startPing() {
+    _stopPing();
+    _doPing();
+    _pingInterval = setInterval(_doPing, 30_000);
+  }
+
+  function _stopPing() {
+    if (_pingInterval) { clearInterval(_pingInterval); _pingInterval = null; }
+  }
 
   // ── Public API ────────────────────────────────────────────────────────────
   window.Auth = {
@@ -58,6 +81,11 @@
   // ── Auth state observer ───────────────────────────────────────────────────
   auth.onAuthStateChanged((user) => {
     _currentUser = user;
+    if (user) {
+      _startPing();
+    } else {
+      _stopPing();
+    }
     _applyAuthState(user);
     window.dispatchEvent(new CustomEvent("auth-changed", { detail: { user } }));
   });
@@ -71,6 +99,8 @@
     const adminBadge= document.getElementById("adminBadge");
     const signInBtn = document.getElementById("signInBtn");
 
+    const adminNav   = document.querySelector('.sidebar-nav-item[data-tab="admin"]');
+
     if (user) {
       if (overlay)    { overlay.classList.add("hidden"); }
       if (appShell)   { appShell.style.display = ""; }
@@ -79,10 +109,12 @@
       if (userPill)   { userPill.style.display = ""; }
       if (adminBadge) { adminBadge.style.display = window.Auth.isAdmin() ? "" : "none"; }
       if (signInBtn)  { signInBtn.disabled = false; }
+      if (adminNav)   { adminNav.style.display = window.Auth.isAdmin() ? "" : "none"; }
     } else {
       if (overlay)   { overlay.classList.remove("hidden"); }
       if (appShell)  { appShell.style.display = "none"; }
       if (userPill)  { userPill.style.display = "none"; }
+      if (adminNav)  { adminNav.style.display = "none"; }
     }
   }
 
