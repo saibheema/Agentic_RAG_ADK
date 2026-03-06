@@ -474,6 +474,162 @@ def create_github_issue(
     }
 
 
+# ── Tool: search GCP Cloud Logging ───────────────────────────────────────────
+
+_GCP_PROJECT_ID = os.environ.get("GCP_PROJECT_ID", "unicon-494419")
+_CLOUD_RUN_SERVICE = os.environ.get("CLOUD_RUN_SERVICE", "agentic-rag")
+
+
+def search_gcp_logs(
+    keywords: str,
+    hours_back: int = 24,
+    severity: str = "WARNING",
+    max_entries: int = 25,
+) -> dict:
+    """Search GCP Cloud Logging for entries related to a user-reported issue.
+
+    ALWAYS call this when classifying an issue as a bug. Use keywords extracted
+    directly from the user's complaint. Log evidence raises confidence and provides
+    exact stack traces to include in PR/issue bodies.
+
+    Args:
+        keywords: Space-separated terms from the user's report, e.g. 'date filter year SQL'.
+                  Pass empty string "" to fetch all recent errors with no keyword filter.
+        hours_back: How many hours back to search (default 24, use 6 for "just now" issues)
+        severity: Minimum severity to return. One of: DEBUG, INFO, WARNING, ERROR, CRITICAL
+                  Default WARNING catches both warnings and errors.
+        max_entries: Maximum log entries to return (default 25)
+
+    Returns a summary of matching log entries, top recurring error messages, and
+    raw entries (timestamp, severity, message, trace).
+    """
+    try:
+        from google.cloud import logging as gcp_logging
+    except ImportError:
+        return {
+            "ok": False,
+            "error": "google-cloud-logging not installed. Run: pip install google-cloud-logging>=3.11.0",
+        }
+
+    _SEV_ORDER = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+    sev_upper = severity.upper() if severity.upper() in _SEV_ORDER else "WARNING"
+    sev_filter_parts = " OR ".join(
+        f'severity="{s}"' for s in _SEV_ORDER[_SEV_ORDER.index(sev_upper):]
+    )
+
+    import datetime as _dt
+    start_iso = (
+        _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=hours_back)
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # Build keyword sub-filter (up to 5 terms to avoid overly long filter strings)
+    kw_list = [k.strip() for k in keywords.split() if k.strip()][:5]
+    if kw_list:
+        kw_clauses = " OR ".join(
+            f'textPayload:"{k}" OR jsonPayload.message:"{k}"' for k in kw_list
+        )
+        log_filter = (
+            f'resource.type="cloud_run_revision"'
+            f' AND resource.labels.service_name="{_CLOUD_RUN_SERVICE}"'
+            f' AND ({sev_filter_parts})'
+            f' AND timestamp>="{start_iso}"'
+            f' AND ({kw_clauses})'
+        )
+    else:
+        log_filter = (
+            f'resource.type="cloud_run_revision"'
+            f' AND resource.labels.service_name="{_CLOUD_RUN_SERVICE}"'
+            f' AND ({sev_filter_parts})'
+            f' AND timestamp>="{start_iso}"'
+        )
+
+    try:
+        client = gcp_logging.Client(project=_GCP_PROJECT_ID)
+        raw_entries = list(
+            client.list_entries(
+                filter_=log_filter,
+                max_results=max_entries,
+                order_by=gcp_logging.DESCENDING,
+            )
+        )
+    except Exception as exc:
+        return {"ok": False, "error": f"Cloud Logging query failed: {exc}"}
+
+    if not raw_entries:
+        return {
+            "ok": True,
+            "found": 0,
+            "time_range_hours": hours_back,
+            "summary": (
+                f"No {sev_upper}+ logs found in the last {hours_back}h"
+                + (f" matching keywords: {keywords}" if keywords else "")
+                + ". This may suggest the issue is intermittent or has not recurred recently."
+            ),
+            "entries": [],
+        }
+
+    entries = []
+    for entry in raw_entries:
+        payload = entry.payload
+        if isinstance(payload, dict):
+            message = payload.get("message") or payload.get("msg") or str(payload)
+        else:
+            message = str(payload) if payload else ""
+        entries.append(
+            {
+                "timestamp": entry.timestamp.isoformat() if entry.timestamp else "",
+                "severity": entry.severity or "UNKNOWN",
+                "message": message[:600],
+                "log_name": (entry.log_name or "").split("/")[-1],
+                "trace": entry.trace or "",
+                "http_request": (
+                    {
+                        "method": entry.http_request.get("requestMethod"),
+                        "url": entry.http_request.get("requestUrl"),
+                        "status": entry.http_request.get("status"),
+                    }
+                    if getattr(entry, "http_request", None)
+                    else None
+                ),
+            }
+        )
+
+    # Summarise top recurring message prefixes
+    freq: dict[str, int] = {}
+    for e in entries:
+        key = e["message"][:120]
+        freq[key] = freq.get(key, 0) + 1
+    top = sorted(freq.items(), key=lambda x: -x[1])[:5]
+
+    return {
+        "ok": True,
+        "found": len(entries),
+        "time_range_hours": hours_back,
+        "min_severity": sev_upper,
+        "keywords_searched": keywords or "(none — all errors)",
+        "top_recurring_errors": [
+            {"message_prefix": m, "occurrences": c} for m, c in top
+        ],
+        "summary": "; ".join(f'"{m[:80]}" ({c}x)' for m, c in top),
+        "entries": entries,
+    }
+
+
+def get_recent_error_groups(hours_back: int = 6) -> dict:
+    """Get the top recurring ERROR-level log groups from Cloud Logging for the last N hours.
+
+    Use this as a quick triage call right after the user reports a bug — it shows
+    what the application has been failing at recently, independent of keywords.
+    Complements search_gcp_logs (which is keyword-driven).
+
+    Args:
+        hours_back: Time window in hours (default 6 — catches very recent regressions)
+
+    Returns top recurring error message groups with occurrence counts.
+    """
+    return search_gcp_logs(keywords="", hours_back=hours_back, severity="ERROR", max_entries=50)
+
+
 # ── Agent ────────────────────────────────────────────────────────────────────
 
 _model = os.environ.get("AGENT_MODEL", "gemini-2.5-flash-lite")
@@ -518,6 +674,42 @@ Read the user's message carefully. Classify as ONE of:
 - **ambiguous**: Insufficient detail — ask one clarifying question, then re-classify
 
 ---
+## STEP 1.5 — SEARCH GCP LOGS (skip only for usage_question)
+
+For **bug** and **enhancement** (and after re-classifying ambiguous), ALWAYS run two parallel
+log searches BEFORE reading any source code or forming any conclusions:
+
+1. Call `get_recent_error_groups(hours_back=6)` — reveals what has been actively failing
+   in the last 6 hours regardless of the user's keywords (catches regressions they didn't
+   mention, corroborates their report, or shows the system is healthy).
+
+2. Call `search_gcp_logs(keywords="<2-5 keywords from user report>", hours_back=24)` —
+   targeted keyword search using terms from the user's complaint
+   (e.g. if they said "date is wrong", use keywords="date filter year timestamp").
+
+**Use the log evidence to:**
+- Confirm or rule out the existence of the error in production
+- Extract exact error messages, stack traces, and affected endpoints
+- Inform the confidence score in Step 2C:
+  - Logs show the EXACT exception the user described → confidence boost (+15–25)
+  - Logs are silent / no matching errors → confidence penalty (may reduce to <100)
+- Pre-populate the "GCP Log Evidence" section in every PR and issue body (see below)
+
+**Log evidence formatting for PR/issue bodies:**
+Always include a `### GCP Log Evidence` section using this format:
+```
+### GCP Log Evidence
+- **Search window:** last Nh (N = hours_back used)
+- **Matching entries found:** X
+- **Top recurring errors:**
+  1. `"<message prefix>"` — Nx in last Nh
+  2. ...
+- **Analysis:** <1–3 sentences: do logs confirm the report? Any stack traces? Healthy or degraded?>
+```
+If no logs were found, write: "No matching logs found in the last 24h — issue may be intermittent
+or the user's session predates the search window."
+
+---
 ## STEP 2A — usage_question
 
 Answer directly. You may call `read_repo_file` and `list_repo_directory` to give accurate,
@@ -529,7 +721,8 @@ code-backed answers. Do NOT create any PRs or GitHub issues.
 1. Explain clearly why this is an enhancement (not a bug), or what information is missing.
 2. Call `create_github_issue` with:
    - Title: concise summary
-   - Body: user's exact complaint, your analysis, why admin review is needed.
+   - Body: user's exact complaint, your analysis, why admin review is needed,
+     and the `### GCP Log Evidence` block from Step 1.5.
      If Step 0 found related issues/PRs, cross-reference them here.
    - Labels: ["support/enhancement"] for enhancements; ["support/needs-clarification"] for ambiguous
 3. Tell the user a support-style message. Do NOT mention GitHub, issues, or PRs.
@@ -543,15 +736,20 @@ code-backed answers. Do NOT create any PRs or GitHub issues.
 Follow ALL sub-steps in order. Do NOT skip investigation.
 
 ### 2C-1. Investigate the code
+- GCP logs from Step 1.5 are already in hand — use them to focus your code search
 - Call `list_repo_directory` on `src/agentic_rag/` to understand the structure
 - Call `read_repo_file` for the most likely relevant files (always start with `src/agentic_rag/agent.py`)
 - Call `search_repo_code` with keywords from the bug report to find relevant code sections
 - Read every file that could be related BEFORE forming conclusions
+- If log evidence contains a partial stack trace, use function/line names from it to
+  drive `search_repo_code` queries (e.g. extract the Python function name from the traceback)
 
 ### 2C-2. Assign a confidence score (0–100)
 - **100** = You can see the EXACT bug in the code, AND the fix is simple and safe (no risk of regressions)
+  - GCP logs showing the exact exception boosts confidence (can reach 100 even if you found it from logs)
 - **70–99** = You found a likely bug but the fix is complex or could affect other parts
 - **1–69** = Possible bug, but you cannot pinpoint the exact cause in the code
+  - No matching GCP logs does NOT make confidence 0 — the bug may be intermittent
 - **0** = This is NOT a code bug — the behaviour is correct
 
 ### 2C-3. confidence == 0 (not a bug)
@@ -566,6 +764,7 @@ Explain why the application is behaving correctly. Guide the user on the correct
    - **Root cause**: exact file, function/line, and what was wrong
    - **Fix**: what was changed and why it's safe
    - **Confidence**: 100% — auto-fix approved by Support Agent
+   - The full `### GCP Log Evidence` block from Step 1.5 (copy verbatim)
 4. `request_copilot_review(pr_number)`
 5. `merge_pull_request(pr_number)` — this triggers CI/CD (~3-5 min to deploy)
 6. Reply with a support-style message. Do NOT mention GitHub, PRs, or branches.
@@ -577,7 +776,11 @@ Explain why the application is behaving correctly. Guide the user on the correct
 ### 2C-5. confidence < 100 → ADMIN-REVIEW PATH
 1. `create_fix_branch(issue_slug)`
 2. `commit_file_fix(...)` — commit your best partial fix or analysis notes as a code comment
-3. `open_pull_request(branch, title, body, confidence=<your score>)` — explain limitation in body
+3. `open_pull_request(branch, title, body, confidence=<your score>)` — body MUST include:
+   - **User report**: the user's original complaint verbatim
+   - **Investigation findings**: what you found (or didn't find) in the code
+   - **Limitation**: why confidence is below 100
+   - The full `### GCP Log Evidence` block from Step 1.5 (copy verbatim)
 4. `request_copilot_review(pr_number)`
 5. Reply with a support-style message. Do NOT mention GitHub, PRs, branches, or confidence scores.
    Use this template:
@@ -611,6 +814,8 @@ Use the reference number (#N) so they can follow up easily.
         FunctionTool(read_repo_file),
         FunctionTool(list_repo_directory),
         FunctionTool(search_repo_code),
+        FunctionTool(search_gcp_logs),
+        FunctionTool(get_recent_error_groups),
         FunctionTool(create_fix_branch),
         FunctionTool(commit_file_fix),
         FunctionTool(open_pull_request),
