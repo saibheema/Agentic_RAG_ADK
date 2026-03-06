@@ -1109,19 +1109,131 @@ code.sql-display {
 }
 
 /* ============================================================
-   Mobile sidebar toggle
+   Mobile sidebar hamburger button
+   ============================================================ */
+.mobile-menu-btn {
+  display: none; /* shown via @media below */
+  width: 40px;
+  height: 40px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
+  border-radius: 9px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background var(--dur) ease, color var(--dur) ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.mobile-menu-btn:hover { background: var(--surface2); color: var(--text); }
+
+/* Dim overlay behind open sidebar on mobile */
+.sidebar-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 99;
+  background: rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(2px);
+  -webkit-backdrop-filter: blur(2px);
+  animation: fadeOverlay 0.18s ease;
+}
+@keyframes fadeOverlay {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.sidebar-overlay.visible { display: block; }
+
+/* ============================================================
+   Mobile — ≤ 640 px
    ============================================================ */
 @media (max-width: 640px) {
+  /* Sidebar slides off-canvas by default */
   .sidebar {
     position: fixed;
     left: 0; top: 0; bottom: 0;
     z-index: 100;
-    transform: translateX(0);
-    box-shadow: 4px 0 16px rgba(0,0,0,0.15);
-    transition: transform var(--dur) ease;
+    width: 260px !important;
+    min-width: 260px !important;
+    transform: translateX(-100%);
+    box-shadow: 4px 0 24px rgba(0,0,0,.25);
+    transition: transform 0.22s cubic-bezier(.4,0,.2,1);
   }
-  .sidebar.mobile-hidden { transform: translateX(-100%); }
+  /* Sidebar open: slide in + show overlay */
+  .sidebar.mobile-open {
+    transform: translateX(0);
+  }
+  /* Restore labels / DB row that collapse logic hides */
+  .sidebar.mobile-open .nav-label,
+  .sidebar.mobile-open .sidebar-name,
+  .sidebar.mobile-open .sidebar-user-text,
+  .sidebar.mobile-open .sign-out-btn,
+  .sidebar.mobile-open .sidebar-db { display: revert !important; opacity: 1 !important; max-width: revert !important; }
+
+  /* Main area always full-width (sidebar is positioned fixed) */
   .main-content { width: 100%; }
+
+  /* Show hamburger */
+  .mobile-menu-btn { display: inline-flex; }
+
+  /* View header: add room for hamburger, tighter padding */
+  .view-header {
+    padding: 0 12px;
+    gap: 8px;
+  }
+
+  /* Chat area: tighter padding on small screens */
+  .chat-area { padding: 12px 10px; }
+
+  /* Composer: tighter sides */
+  .composer { padding: 8px 10px 10px; }
+  /* Extra bottom padding for iOS home indicator */
+  @supports (padding-bottom: env(safe-area-inset-bottom)) {
+    .composer { padding-bottom: calc(10px + env(safe-area-inset-bottom)); }
+  }
+
+  /* Wider messages on small screens */
+  .msg-content { max-width: 96%; }
+
+  /* Settings grid single-column */
+  .settings-grid { grid-template-columns: 1fr; }
+  .settings-panel.open { max-height: 480px; }
+
+  /* Touch-friendly send button */
+  .send-btn { width: 40px; height: 40px; }
+
+  /* Support intro padding */
+  .support-intro { padding: 14px 14px 0; }
+
+  /* Admin panel table → card layout on mobile */
+  .admin-table thead { display: none; }
+  .admin-table,
+  .admin-table tbody,
+  .admin-table tr,
+  .admin-table td { display: block; width: 100%; }
+  .admin-table tr {
+    border: 1px solid var(--border);
+    border-radius: var(--rs);
+    margin-bottom: 10px;
+    padding: 10px 12px;
+  }
+  .admin-table tr.row-online { background: rgba(22,163,74,.06); }
+  .admin-table td {
+    border: none;
+    padding: 3px 0;
+  }
+  .td-status {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    width: auto;
+  }
+  .admin-table tr { position: relative; }
+  .ts-cell { font-size: 0.78rem; }
+  .admin-panel-body { padding: 1rem; }
+  .admin-stats { gap: 0.6rem; }
+  .admin-stat-refresh { margin-left: 0; }
 }
 
 /* ============================================================
@@ -1217,7 +1329,164 @@ code.sql-display {
    Responsive adjustments
    ============================================================ */
 @media (max-width: 480px) {
-  .auth-card    { padding: 36px 24px; }
-  .view-header  { padding: 0 12px; }
-  .composer     { padding: 8px 10px 12px; }
+  body { font-size: 14px; }
+  .auth-card    { padding: 32px 20px; }
+  .auth-title   { font-size: 1.3rem; }
+  .view-header  { height: 48px; min-height: 48px; padding: 0 10px; }
+  .composer     { padding: 6px 8px 8px; }
+  .chat-area    { padding: 10px 8px; gap: 4px; }
+  .msg-body     { padding: 8px 11px; }
+  .admin-panel-body { padding: 0.75rem; }
+}
+
+/* ============================================================
+   Admin panel — user activity & last login
+   ============================================================ */
+.admin-panel-body {
+  padding: 1.25rem 1.5rem;
+  overflow-y: auto;
+  flex: 1;
+}
+
+/* Summary stats bar */
+.admin-stats {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  margin-bottom: 1.1rem;
+  flex-wrap: wrap;
+}
+.admin-stat-total {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.admin-stat-online {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #16a34a;
+  background: rgba(22, 163, 74, 0.1);
+  padding: 2px 9px;
+  border-radius: 10px;
+}
+.admin-stat-refresh {
+  font-size: 0.78rem;
+  color: var(--muted);
+  margin-left: auto;
+}
+
+/* Table */
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+.admin-table thead th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.admin-table tbody td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.admin-table tbody tr:last-child td { border-bottom: none; }
+.admin-table tbody tr:hover td      { background: var(--bg); }
+.admin-table tbody tr.row-online td { background: rgba(22,163,74,.04); }
+
+/* Status dot */
+.td-status { width: 32px; }
+.presence-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.presence-dot.online {
+  background: #16a34a;
+  box-shadow: 0 0 0 2.5px rgba(22,163,74,.22);
+}
+.presence-dot.offline {
+  background: var(--border, #d1d5db);
+}
+
+/* User cell */
+.admin-user-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.admin-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: #7c3aed;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.78rem;
+  font-weight: 700;
+  flex-shrink: 0;
+  text-transform: uppercase;
+}
+.admin-avatar.avatar-online {
+  box-shadow: 0 0 0 2px #16a34a;
+}
+.admin-email {
+  display: block;
+  font-size: 0.85rem;
+  color: var(--text);
+  font-weight: 500;
+}
+.admin-display-name {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-top: 1px;
+}
+.admin-disabled-badge {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  background: #ef4444;
+  color: #fff;
+  padding: 1px 5px;
+  border-radius: 8px;
+  margin-left: 5px;
+  letter-spacing: 0.04em;
+  vertical-align: middle;
+}
+
+/* Timestamp cells */
+.ts-cell {
+  font-size: 0.82rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* States */
+.admin-loading {
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.9rem;
+  padding: 3rem 1rem;
+}
+.admin-error {
+  color: #ef4444;
+  font-size: 0.9rem;
+  padding: 1.5rem;
+}
+.admin-empty {
+  color: var(--muted);
+  font-size: 0.9rem;
+  padding: 1.5rem;
 }
