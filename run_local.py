@@ -71,7 +71,9 @@ app.add_middleware(
 _AUTH_DISABLED = os.environ.get("AUTH_DISABLED", "false").lower() in ("true", "1", "yes")
 
 # Paths that never require authentication
-_EXEMPT = ("/app", "/", "/healthz", "/favicon", "/databases")
+# NOTE: "/" must be an exact match — using startswith("/") would exempt ALL paths.
+_EXEMPT_EXACT = {"/"}
+_EXEMPT_PREFIX = ("/app", "/healthz", "/favicon", "/databases")
 
 try:
     import firebase_admin
@@ -111,7 +113,7 @@ async def firebase_auth_middleware(request: Request, call_next):
         return await call_next(request)
 
     path = request.url.path
-    if request.method == "OPTIONS" or any(path.startswith(p) for p in _EXEMPT):
+    if request.method == "OPTIONS" or path in _EXEMPT_EXACT or any(path.startswith(p) for p in _EXEMPT_PREFIX):
         return await call_next(request)
 
     auth_header = request.headers.get("Authorization", "")
