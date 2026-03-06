@@ -655,23 +655,30 @@ _model = os.environ.get("AGENT_MODEL", "gemini-3.0-flash-preview")
 # Lightweight model for the router — it only picks between 2 sub-agents
 _router_model = os.environ.get("ROUTER_MODEL", "gemini-2.5-flash-lite")
 
+# ── Token / thinking budget settings (tunable via env vars or Secret Manager) ─
+# Update these in Cloud Run env vars (or Secret Manager) without redeploying.
+_db_thinking_budget = int(os.environ.get("DB_AGENT_THINKING_BUDGET", "8192"))
+_db_max_output_tokens = int(os.environ.get("DB_AGENT_MAX_OUTPUT_TOKENS", "8192"))
+_rag_max_output_tokens = int(os.environ.get("RAG_AGENT_MAX_OUTPUT_TOKENS", "2048"))
+_router_max_output_tokens = int(os.environ.get("ROUTER_MAX_OUTPUT_TOKENS", "256"))
+
 # Disable extended thinking on all agents: saves 5-15s per LLM call.
 # Cap output tokens to reduce generation time (SQL answers rarely exceed 1k).
 _no_think = BuiltInPlanner(
     thinking_config=types.ThinkingConfig(thinking_budget=0)
 )
 _light_think = BuiltInPlanner(
-    thinking_config=types.ThinkingConfig(thinking_budget=8192)  # higher budget = more accurate SQL
+    thinking_config=types.ThinkingConfig(thinking_budget=_db_thinking_budget)
 )
 _fast_config = types.GenerateContentConfig(
-    max_output_tokens=2048,
+    max_output_tokens=_rag_max_output_tokens,
 )
 # Database agent needs more headroom: thinking tokens + SQL + result table
 _db_agent_config = types.GenerateContentConfig(
-    max_output_tokens=8192,
+    max_output_tokens=_db_max_output_tokens,
 )
 _router_config = types.GenerateContentConfig(
-    max_output_tokens=256,  # router only writes a delegation decision
+    max_output_tokens=_router_max_output_tokens,
 )
 
 database_agent = LlmAgent(

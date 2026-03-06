@@ -43,6 +43,13 @@ class AppSettings(BaseSettings):
     # ── RAG (Vertex AI RAG Engine) ───────────────────────────
     rag_corpus_name: str = Field(default="", alias="VERTEX_RAG_CORPUS")
 
+    # ── Agent token / thinking budget ────────────────────────
+    # Tune via Cloud Run env vars or Secret Manager without redeploying.
+    db_agent_thinking_budget: int = Field(default=8192, alias="DB_AGENT_THINKING_BUDGET")
+    db_agent_max_output_tokens: int = Field(default=8192, alias="DB_AGENT_MAX_OUTPUT_TOKENS")
+    rag_agent_max_output_tokens: int = Field(default=2048, alias="RAG_AGENT_MAX_OUTPUT_TOKENS")
+    router_max_output_tokens: int = Field(default=256, alias="ROUTER_MAX_OUTPUT_TOKENS")
+
     # ── Tenant config (future multi-tenant) ──────────────────
     tenant_config_use_firestore: bool = Field(default=False, alias="TENANT_CONFIG_USE_FIRESTORE")
     tenant_default_db_type: str = Field(default="postgres", alias="TENANT_DEFAULT_DB_TYPE")
