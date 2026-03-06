@@ -192,13 +192,27 @@ def _connect_mssql(cfg: dict[str, Any]):
     )
 
 
+def _connect_postgres(cfg: dict[str, Any]):
+    """Connect to PostgreSQL via psycopg2."""
+    import psycopg2  # type: ignore[import-untyped]
+
+    return psycopg2.connect(
+        host=cfg["host"],
+        port=cfg["port"],
+        user=cfg["user"],
+        password=cfg["password"],
+        dbname=cfg["database"],
+        connect_timeout=max(5, cfg["query_timeout_ms"] // 1000),
+    )
+
+
 def _connect(cfg: dict[str, Any] | None = None):
     """Open a DB connection. Pass cfg explicitly for multi-DB routing."""
     if cfg is None:
         cfg = _db_config()
     if _is_mssql_type(cfg["db_type"]):
         return _connect_mssql(cfg)
-    raise ValueError(f"Unsupported db_type: {cfg['db_type']!r}. Only 'mssql' is supported.")
+    return _connect_postgres(cfg)
 
 
 def _to_rows(cursor) -> list[dict[str, Any]]:
@@ -652,6 +666,10 @@ _light_think = BuiltInPlanner(
 _fast_config = types.GenerateContentConfig(
     max_output_tokens=2048,
 )
+# Database agent needs more headroom: thinking tokens + SQL + result table
+_db_agent_config = types.GenerateContentConfig(
+    max_output_tokens=8192,
+)
 _router_config = types.GenerateContentConfig(
     max_output_tokens=256,  # router only writes a delegation decision
 )
@@ -660,7 +678,7 @@ database_agent = LlmAgent(
     name="database_agent",
     model=_model,
     planner=_light_think,
-    generate_content_config=_fast_config,
+    generate_content_config=_db_agent_config,
     description=(
         "Specialist for structured data questions. Handles anything about "
         "orders, customers, products, sales, counts, totals, rankings, "

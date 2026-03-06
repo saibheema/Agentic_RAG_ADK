@@ -3,3 +3,4 @@ google-genai>=1.23.0
 google-cloud-aiplatform>=1.74.0
 google-cloud-logging>=3.11.0
 pymssql>=2.2.8
+psycopg2-binary>=2.9.9
