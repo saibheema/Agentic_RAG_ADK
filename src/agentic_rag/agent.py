@@ -810,8 +810,8 @@ database_agent = LlmAgent(
 
         "## ACCESS CONTROL — MANDATORY\n"
         "get_schema_metadata returns access_context: {user_name, role_name, replevel, salesperson_id}.\n"
-        "  replevel == 5 (Salesperson): every query MUST have  WHERE salesperson_id = '{salesperson_id}'.\n"
-        "  replevel == 3 (Manager):     every query MUST have  WHERE salesperson_id LIKE '{salesperson_id}%'.\n"
+        "  replevel == 5 (Salesperson): every query MUST have  WHERE salesperson_id = <access_context.salesperson_id>.\n"
+        "  replevel == 3 (Manager):     every query MUST have  WHERE salesperson_id LIKE '<access_context.salesperson_id>%'.\n"
         "                               For team-only reports exclude the manager's own row.\n"
         "  replevel == 1 (Internal):    no salesperson filter — full access.\n\n"
 
