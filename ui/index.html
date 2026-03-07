@@ -202,9 +202,11 @@
               </div>
               <div class="sett-row" id="settingsSalespersonRow" style="display:none">
                 <span class="sett-label" id="settingsSpLabel">Salesperson ID</span>
-                <select id="salespersonId" class="sett-select">
-                  <option value="">— select salesperson —</option>
-                </select>
+                <input id="salespersonId" class="sett-input" type="text"
+                       placeholder="e.g. F1010"
+                       list="salespersonsDatalist"
+                       autocomplete="off" spellcheck="false" />
+                <datalist id="salespersonsDatalist"></datalist>
               </div>
               <div class="sett-row">
                 <span class="sett-label">Role Name</span>

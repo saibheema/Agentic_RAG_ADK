@@ -36,7 +36,9 @@ const el = {
 };
 
 function updateRbacBar() {
-  const lvl = state.replevel || '1';
+  // Read the LIVE dropdown value so the row shows immediately when the user
+  // changes Role Level — before they click Apply.
+  const lvl = (el.replevel ? el.replevel.value : null) || state.replevel || '1';
   const ROLE_COLORS = { '1': '#22c55e', '3': '#6366f1', '5': '#f59e0b' };
   const ROLE_LABELS = { '1': 'Internal', '3': 'Manager', '5': 'Salesperson' };
 
@@ -45,17 +47,12 @@ function updateRbacBar() {
     el.settingsSalespersonRow.style.display = (lvl === '3' || lvl === '5') ? '' : 'none';
   }
 
-  // Update label for the salesperson select
+  // Update label (Manager ID vs Salesperson ID) and input placeholder
   if (el.settingsSpLabel) {
     el.settingsSpLabel.textContent = lvl === '3' ? 'Manager ID' : 'Salesperson ID';
   }
-
-  // Update first (empty) option label
-  if (el.salespersonId && el.salespersonId.tagName === 'SELECT') {
-    const first = el.salespersonId.options[0];
-    if (first && first.value === '') {
-      first.textContent = lvl === '3' ? '— select manager ID —' : '— select salesperson —';
-    }
+  if (el.salespersonId && el.salespersonId.tagName === 'INPUT') {
+    el.salespersonId.placeholder = lvl === '3' ? 'e.g. F1010 (manager prefix)' : 'e.g. F1010';
   }
 
   // Update sidebar role status indicator
@@ -444,8 +441,8 @@ async function fetchDatabases() {
 }
 
 async function fetchSalespersons() {
-  const sel = el.salespersonId;
-  if (!sel || sel.tagName !== 'SELECT') return;
+  const input = el.salespersonId;
+  if (!input) return;
 
   const base = (el.apiBase.value.trim() || state.apiBase || '').replace(/\/$/, '');
   const alias = state.dbAlias || '';
@@ -459,22 +456,25 @@ async function fetchSalespersons() {
     const list = data.salespersons || [];
     if (!list.length) return;
 
-    const prev = sel.value || state.salespersonId;
-    const lvl  = state.replevel || '1';
-    const emptyLabel = lvl === '3' ? '— select manager ID —' : '— select salesperson —';
+    // Populate the <datalist> for autocomplete suggestions.
+    // The <input> always works as a plain text field — this just adds hints.
+    const datalist = document.getElementById('salespersonsDatalist');
+    if (datalist) {
+      datalist.innerHTML = '';
+      list.forEach(({ id, name }) => {
+        const opt = document.createElement('option');
+        opt.value = id;
+        if (name && name !== id) opt.label = `${id}  —  ${name}`;
+        datalist.appendChild(opt);
+      });
+    }
 
-    sel.innerHTML = `<option value="">${emptyLabel}</option>`;
-    list.forEach(({ id, name }) => {
-      const opt = document.createElement('option');
-      opt.value = id;
-      opt.textContent = name && name !== id ? `${id}  —  ${name}` : id;
-      sel.appendChild(opt);
-    });
-
-    // Restore previously selected value if it still exists
-    if (prev) sel.value = prev;
+    // If the input is empty, restore a previously saved value
+    if (!input.value && state.salespersonId) {
+      input.value = state.salespersonId;
+    }
   } catch {
-    // Server not available — leave dropdown as-is
+    // Server not available — text input still works without suggestions
   }
 }
 
