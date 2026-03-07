@@ -434,7 +434,12 @@ async function fetchDatabases() {
     state.dbAlias = el.dbAlias.value;
     localStorage.setItem('dbAlias', state.dbAlias);
     updateDbBadge();
-    fetchSalespersons();            // pre-load salesperson dropdown for this DB
+    // Only fetch salespersons if already authenticated — avoids a 401 on the
+    // cold page-load call that happens before the Firebase token is ready.
+    // The auth-changed listener below re-calls fetchDatabases() after sign-in
+    // which will then reach this branch with a valid token.
+    const _authedUser = (typeof window.Auth !== 'undefined') ? window.Auth.currentUser() : null;
+    if (_authedUser) fetchSalespersons();
   } catch {
     // Server not up yet or no /databases endpoint — leave selector as-is
   }
