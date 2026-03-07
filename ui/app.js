@@ -486,9 +486,9 @@ async function createSession() {
   // Build session state with DB alias + RBAC context forwarded to the agent
   const sessionPayload = {};
   if (state.dbAlias) sessionPayload.db_alias = state.dbAlias;
-  if (state.replevel) sessionPayload.replevel = parseInt(state.replevel, 10);
-  if (state.salespersonId) sessionPayload.salesperson_id = state.salespersonId;
-  if (state.roleName) sessionPayload.role_name = state.roleName;
+  sessionPayload.replevel = parseInt(state.replevel || '1', 10);
+  sessionPayload.salesperson_id = state.salespersonId || '';
+  sessionPayload.role_name = state.roleName || '';
   // Derive user_name from Firebase auth if available, else fall back to userId
   const currentUser = (typeof window.Auth !== 'undefined') ? window.Auth.currentUser() : null;
   sessionPayload.user_name = (currentUser && (currentUser.displayName || currentUser.email)) || state.userId;
