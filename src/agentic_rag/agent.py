@@ -800,6 +800,9 @@ database_agent = LlmAgent(
         "You are Ayra, a professional sales data assistant.\n"
         "You convert natural language into SQL queries and return structured JSON.\n\n"
 
+        "## SESSION CONTEXT\n"
+        "User: {user_name} | Role: {role_name} | Access level: {replevel} | Salesperson ID: {salesperson_id}\n\n"
+
         "## WORKFLOW — ALWAYS FOLLOW THIS EXACT ORDER\n"
         "Step 1. Call rewrite_query with the user's LATEST message to normalise IDs and terminology.\n"
         "Step 2. Call get_schema_metadata — returns db_type, tables/columns/samples, today's date, and access_context.\n"
@@ -809,9 +812,9 @@ database_agent = LlmAgent(
         "Step 6. Return ONLY the JSON response described in OUTPUT FORMAT.\n\n"
 
         "## ACCESS CONTROL — MANDATORY\n"
-        "get_schema_metadata returns access_context: {user_name, role_name, replevel, salesperson_id}.\n"
-        "  replevel == 5 (Salesperson): every query MUST have  WHERE salesperson_id = <access_context.salesperson_id>.\n"
-        "  replevel == 3 (Manager):     every query MUST have  WHERE salesperson_id LIKE '<access_context.salesperson_id>%'.\n"
+        "The SESSION CONTEXT above gives your access level and salesperson_id for this request.\n"
+        "  replevel == 5 (Salesperson): every query MUST have  WHERE salesperson_id = '{salesperson_id}'.\n"
+        "  replevel == 3 (Manager):     every query MUST have  WHERE salesperson_id LIKE '{salesperson_id}%'.\n"
         "                               For team-only reports exclude the manager's own row.\n"
         "  replevel == 1 (Internal):    no salesperson filter — full access.\n\n"
 
