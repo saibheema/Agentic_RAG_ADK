@@ -68,37 +68,22 @@
         </svg>
         <span class="nav-label">Admin</span>
       </button>
+      <!-- Settings tab -->
+      <button class="sidebar-nav-item" data-tab="settings">
+        <svg class="nav-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+        <span class="nav-label">Settings</span>
+      </button>
     </nav>
 
     <div class="sidebar-spacer"></div>
 
-    <!-- DB Selector -->
-    <div class="sidebar-db topbar-db">
-      <span class="db-dot"></span>
-      <label class="db-label" for="dbAlias">DB</label>
-      <select id="dbAlias" class="topbar-db-select">
-        <option value="">&ndash; select &ndash;</option>
-      </select>
-      <div id="dbBadge" class="db-badge" style="display:none"></div>
-    </div>
-
-    <!-- RBAC Role Selector -->
-    <div class="sidebar-role" id="rbacBar" data-replevel="1">
-      <span class="role-dot" id="roleDot"></span>
-      <label class="role-label" for="sidebarReplevel">Role</label>
-      <select id="sidebarReplevel" class="sidebar-role-select" title="Access level — applies on next session">
-        <option value="1">Internal</option>
-        <option value="3">Manager</option>
-        <option value="5">Salesperson</option>
-      </select>
-    </div>
-    <!-- ID row — visible for Manager (3) and Salesperson (5) -->
-    <div class="sidebar-sp-bar" id="salespersonBar" style="display:none">
-      <select id="sidebarSalespersonId" class="sidebar-sp-select">
-        <option value="">— select —</option>
-      </select>
-      <button id="rbacApplyBtn" class="rbac-apply-btn" type="button"
-              title="Apply role and start a new session">Apply</button>
+    <!-- Compact role status shown in sidebar -->
+    <div class="sidebar-role-status" id="roleStatus">
+      <span class="role-dot-sm" id="roleStatusDot"></span>
+      <span class="role-status-label" id="roleStatusLabel">Internal</span>
     </div>
 
     <!-- Footer: user + controls -->
@@ -120,50 +105,7 @@
   <!-- MAIN CONTENT -->
   <div class="main-content">
 
-    <!-- SETTINGS PANEL (collapsed by default) -->
-    <div id="settingsPanel" class="settings-panel">
-      <div class="settings-inner">
-        <div class="settings-grid">
-          <label>
-            <span>API Base URL</span>
-            <input id="apiBase" type="url" placeholder="https://&hellip; (blank = same origin)" autocomplete="off" spellcheck="false" />
-          </label>
-          <label>
-            <span>App Name</span>
-            <input id="appName" type="text" placeholder="agentic_rag" />
-          </label>
-          <label>
-            <span>User ID</span>
-            <input id="userId" type="text" placeholder="web-user" />
-          </label>
-          <label>
-            <span>Session ID</span>
-            <input id="sessionId" type="text" readonly placeholder="(auto-assigned)" />
-          </label>
-          <!-- RBAC context — forwarded to the agent via ADK session state -->
-          <label>
-            <span>Role Level</span>
-            <select id="replevel" title="Controls salesperson-level row filtering in SQL queries">
-              <option value="1">1 — Internal (full access)</option>
-              <option value="3">3 — Manager</option>
-              <option value="5">5 — Salesperson</option>
-            </select>
-          </label>
-          <label>
-            <span>Salesperson ID</span>
-            <input id="salespersonId" type="text" placeholder="e.g. F1010" autocomplete="off" spellcheck="false" />
-          </label>
-          <label>
-            <span>Role Name</span>
-            <input id="roleName" type="text" placeholder="e.g. Sales Manager" autocomplete="off" />
-          </label>
-        </div>
-        <div class="settings-actions">
-          <button id="newSessionBtn" type="button">New Session</button>
-          <button id="clearChatBtn" type="button" class="secondary">Clear Chat</button>
-        </div>
-      </div>
-    </div>
+
 
     <!-- RAG CHAT VIEW -->
     <div id="view-rag" class="tab-view active">
@@ -174,12 +116,6 @@
           </svg>
         </button>
         <span class="view-title">Chat</span>
-        <button id="settingsToggle" class="icon-btn" title="Settings" aria-label="Toggle settings">
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="3"/>
-            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-          </svg>
-        </button>
       </div>
       <main id="chat" class="chat-area" aria-live="polite"></main>
       <div class="composer">
@@ -244,6 +180,85 @@
         <div class="admin-loading">Loading…</div>
       </div>
     </div>
+
+      <!-- ─── Settings View ──────────────────────────────── -->
+      <div id="view-settings" class="tab-view">
+        <div class="view-header">
+          <span class="view-title">Settings</span>
+        </div>
+        <div class="sett-body">
+
+          <!-- ── Access Control ── -->
+          <div class="sett-section">
+            <div class="sett-heading">Access Control</div>
+            <div class="sett-card">
+              <div class="sett-row">
+                <span class="sett-label">Role Level</span>
+                <select id="replevel" class="sett-select">
+                  <option value="1">1 — Internal</option>
+                  <option value="3">3 — Manager</option>
+                  <option value="5">5 — Salesperson</option>
+                </select>
+              </div>
+              <div class="sett-row" id="settingsSalespersonRow" style="display:none">
+                <span class="sett-label" id="settingsSpLabel">Salesperson ID</span>
+                <select id="salespersonId" class="sett-select">
+                  <option value="">— select salesperson —</option>
+                </select>
+              </div>
+              <div class="sett-row">
+                <span class="sett-label">Role Name</span>
+                <input id="roleName" class="sett-input" type="text" placeholder="e.g. John Smith" />
+              </div>
+              <div class="sett-actions">
+                <button id="rbacApplyBtn" class="sett-btn-primary" type="button">Apply Role</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- ── Database ── -->
+          <div class="sett-section">
+            <div class="sett-heading">Database</div>
+            <div class="sett-card">
+              <div class="sett-row">
+                <span class="sett-label">Connection</span>
+                <div style="display:flex;gap:8px;align-items:center;min-width:0;flex:1">
+                  <select id="dbAlias" class="sett-select topbar-db-select"></select>
+                  <div id="dbBadge" class="db-badge" style="display:none"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ── Session ── -->
+          <div class="sett-section">
+            <div class="sett-heading">Session</div>
+            <div class="sett-card">
+              <div class="sett-row">
+                <span class="sett-label">API Base URL</span>
+                <input id="apiBase" class="sett-input" type="url" placeholder="http://localhost:8000" />
+              </div>
+              <div class="sett-row">
+                <span class="sett-label">App Name</span>
+                <input id="appName" class="sett-input" type="text" />
+              </div>
+              <div class="sett-row">
+                <span class="sett-label">User ID</span>
+                <input id="userId" class="sett-input" type="text" />
+              </div>
+              <div class="sett-row">
+                <span class="sett-label">Session ID</span>
+                <input id="sessionId" class="sett-input" type="text" readonly />
+              </div>
+              <div class="sett-actions">
+                <button id="newSessionBtn" class="sett-btn-primary" type="button">New Session</button>
+                <button id="clearChatBtn" class="sett-btn-secondary" type="button">Clear Chat</button>
+              </div>
+            </div>
+          </div>
+
+        </div><!-- /.sett-body -->
+      </div><!-- /#view-settings -->
 
     </div><!-- /.main-content -->
 
