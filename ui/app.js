@@ -17,16 +17,15 @@ const el = {
   sessionId: document.getElementById('sessionId'),
   dbAlias: document.getElementById('dbAlias'),
   dbBadge: document.getElementById('dbBadge'),
-  // RBAC inputs (settings panel — advanced)
+  // RBAC / settings page
   replevel: document.getElementById('replevel'),
   salespersonId: document.getElementById('salespersonId'),
   roleName: document.getElementById('roleName'),
-  // RBAC quick-switcher (sidebar — always visible)
-  rbacBar: document.getElementById('rbacBar'),
-  sidebarReplevel: document.getElementById('sidebarReplevel'),
-  sidebarSalespersonId: document.getElementById('sidebarSalespersonId'),
-  salespersonBar: document.getElementById('salespersonBar'),
   rbacApplyBtn: document.getElementById('rbacApplyBtn'),
+  settingsSalespersonRow: document.getElementById('settingsSalespersonRow'),
+  settingsSpLabel: document.getElementById('settingsSpLabel'),
+  roleStatusDot: document.getElementById('roleStatusDot'),
+  roleStatusLabel: document.getElementById('roleStatusLabel'),
   chat: document.getElementById('chat'),
   prompt: document.getElementById('prompt'),
   chatForm: document.getElementById('chatForm'),
@@ -38,18 +37,32 @@ const el = {
 
 function updateRbacBar() {
   const lvl = state.replevel || '1';
-  // Update sidebar role dot colour
-  if (el.rbacBar) el.rbacBar.dataset.replevel = lvl;
-  // Show ID input for managers (level 3) and salespersons (level 5)
-  if (el.salespersonBar) {
-    el.salespersonBar.style.display = (lvl === '3' || lvl === '5') ? 'flex' : 'none';
+  const ROLE_COLORS = { '1': '#22c55e', '3': '#6366f1', '5': '#f59e0b' };
+  const ROLE_LABELS = { '1': 'Internal', '3': 'Manager', '5': 'Salesperson' };
+
+  // Settings page: show/hide salesperson row
+  if (el.settingsSalespersonRow) {
+    el.settingsSalespersonRow.style.display = (lvl === '3' || lvl === '5') ? '' : 'none';
   }
-  // Update first (empty) option label to reflect the role context
-  if (el.sidebarSalespersonId && el.sidebarSalespersonId.tagName === 'SELECT') {
-    const first = el.sidebarSalespersonId.options[0];
+
+  // Update label for the salesperson select
+  if (el.settingsSpLabel) {
+    el.settingsSpLabel.textContent = lvl === '3' ? 'Manager ID' : 'Salesperson ID';
+  }
+
+  // Update first (empty) option label
+  if (el.salespersonId && el.salespersonId.tagName === 'SELECT') {
+    const first = el.salespersonId.options[0];
     if (first && first.value === '') {
       first.textContent = lvl === '3' ? '— select manager ID —' : '— select salesperson —';
     }
+  }
+
+  // Update sidebar role status indicator
+  if (el.roleStatusDot) el.roleStatusDot.style.background = ROLE_COLORS[lvl] || '#22c55e';
+  if (el.roleStatusLabel) {
+    const who = (lvl !== '1' && state.salespersonId) ? ` · ${state.salespersonId}` : '';
+    el.roleStatusLabel.textContent = (ROLE_LABELS[lvl] || 'Internal') + who;
   }
 }
 
@@ -63,9 +76,6 @@ function syncInputs() {
   if (el.replevel) el.replevel.value = state.replevel;
   if (el.salespersonId) el.salespersonId.value = state.salespersonId;
   if (el.roleName) el.roleName.value = state.roleName;
-  // Sidebar RBAC quick-switcher
-  if (el.sidebarReplevel) el.sidebarReplevel.value = state.replevel;
-  if (el.sidebarSalespersonId) el.sidebarSalespersonId.value = state.salespersonId;
   updateDbBadge();
   updateRbacBar();
 }
@@ -434,7 +444,7 @@ async function fetchDatabases() {
 }
 
 async function fetchSalespersons() {
-  const sel = el.sidebarSalespersonId;
+  const sel = el.salespersonId;
   if (!sel || sel.tagName !== 'SELECT') return;
 
   const base = (el.apiBase.value.trim() || state.apiBase || '').replace(/\/$/, '');
@@ -852,28 +862,23 @@ if (el.dbAlias) {
 syncInputs();
 fetchDatabases();
 
-/* ── RBAC sidebar quick-switcher ────────────────────────── */
-(function initRbacBar() {
-  if (!el.sidebarReplevel) return;
-
+/* ── Settings page: role & DB wiring ───────────────────── */
+(function initSettingsPage() {
   const ROLE_LABELS = { '1': 'Internal', '3': 'Manager', '5': 'Salesperson' };
 
-  /** Apply role change: persist → update bar → recreate session */
+  /** Apply role change: persist → update UI → recreate session */
   async function applyRoleChange() {
-    const lvl  = el.sidebarReplevel.value;
-    const spId = (el.sidebarSalespersonId ? el.sidebarSalespersonId.value.trim() : '') || '';
+    const lvl  = el.replevel ? el.replevel.value : '1';
+    const spId = (el.salespersonId ? el.salespersonId.value.trim() : '') || '';
 
-    // Require a salesperson/manager ID when switching to level 3 or 5
+    // Require an ID when switching to level 3 or 5
     if ((lvl === '5' || lvl === '3') && !spId) {
-      if (el.sidebarSalespersonId) el.sidebarSalespersonId.focus();
+      if (el.salespersonId) el.salespersonId.focus();
       return;
     }
 
-    // Sync to state (also keeps settings panel in sync)
-    state.replevel    = lvl;
+    state.replevel      = lvl;
     state.salespersonId = spId;
-    if (el.replevel)      el.replevel.value      = lvl;
-    if (el.salespersonId) el.salespersonId.value = spId;
     localStorage.setItem('replevel',      lvl);
     localStorage.setItem('salespersonId', spId);
     updateRbacBar();
@@ -899,24 +904,15 @@ fetchDatabases();
     }
   }
 
-  // Role select: show/hide salesperson bar; only Internal (1) applies immediately
-  el.sidebarReplevel.addEventListener('change', () => {
-    const lvl = el.sidebarReplevel.value;
-    updateRbacBar();
-    if (lvl === '1') {
-      // Internal — no salesperson ID needed; apply immediately
-      applyRoleChange();
-    } else {
-      // Manager (3) and Salesperson (5) both require an ID — focus input, wait for Apply
-      if (el.sidebarSalespersonId) el.sidebarSalespersonId.focus();
-    }
-  });
+  // Role select: update row visibility on change (apply waits for the button)
+  if (el.replevel) {
+    el.replevel.addEventListener('change', updateRbacBar);
+  }
 
-  // Apply button (level 5)
+  // Apply Role button
   if (el.rbacApplyBtn) {
     el.rbacApplyBtn.addEventListener('click', applyRoleChange);
   }
-
 })();
 
 // Re-fetch DB list when API base URL is changed
@@ -944,14 +940,12 @@ el.apiBase.addEventListener('change', () => {
 (function initTabs() {
   const navItems  = document.querySelectorAll('.sidebar-nav-item');
   const tabViews  = document.querySelectorAll('.tab-view');
-  const settPanel = document.getElementById('settingsPanel');
 
   navItems.forEach((btn) => {
     btn.addEventListener('click', () => {
       const tab = btn.dataset.tab;
       navItems.forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
       tabViews.forEach((v) => v.classList.toggle('active', v.id === `view-${tab}`));
-      if (settPanel && tab !== 'rag') settPanel.classList.remove('open');
       window.dispatchEvent(new CustomEvent('tab-changed', { detail: { tab } }));
       // Close mobile sidebar when a nav item is tapped
       _closeMobileSidebar();
@@ -1020,17 +1014,6 @@ function _closeMobileSidebar() {
   // Close on resize back to desktop
   window.addEventListener('resize', () => {
     if (!_isMobile()) _closeMobileSidebar();
-  });
-})();
-
-/* ── Settings Panel Toggle ─────────────────────────────── */
-(function initSettings() {
-  const toggleBtn = document.getElementById('settingsToggle');
-  const panel     = document.getElementById('settingsPanel');
-  if (!toggleBtn || !panel) return;
-  toggleBtn.addEventListener('click', () => {
-    panel.classList.toggle('open');
-    toggleBtn.classList.toggle('active');
   });
 })();
 
