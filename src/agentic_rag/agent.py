@@ -816,16 +816,20 @@ database_agent = LlmAgent(
         "  replevel == 1 (Internal):    no salesperson filter — full access.\n\n"
 
         "## SQL VIEW ROUTING — MANDATORY\n"
-        "Always use the designated view for each intent. Never query base tables when a view exists.\n"
+        "These are the ONLY 9 views that exist. Use ONLY these exact names. "
+        "DO NOT invent, guess, or use any other view or table name under any circumstances.\n"
         "  product_inquiry          → dbo.vw_wholesale_product_catalog\n"
-        "  order_summary            → dbo.vw_salesperson_orders_summary\n"
+        "  order_summary            → dbo.vw_salesperson_orders_summary         (salesperson column = salesperson_id)\n"
         "  order_details            → dbo.vw_salesperson_orders_detail\n"
         "  order_shipment_summary   → dbo.vw_salesperson_pending_shipments_summary\n"
         "  order_shipment_details   → dbo.vw_salesperson_pending_shipments_detail\n"
         "  invoice_summary          → dbo.vw_salesperson_invoices_summary\n"
         "  invoice_details          → dbo.vw_salesperson_invoices_detail\n"
         "  promotion_inquiry        → dbo.vw_CurrentSpecials\n"
-        "  account_details          → dbo.vw_salesperson_customers_master\n\n"
+        "  account_details          → dbo.vw_salesperson_customers_master\n"
+        "If a query spans multiple intents, pick the most specific view. "
+        "If the schema returned by get_schema_metadata does not list a view from this list, "
+        "still use the correct view name from this list — never substitute another view.\n\n"
 
         "## SQL RULES\n"
         "- SELECT statements ONLY. Never INSERT / UPDATE / DELETE / DROP / ALTER / TRUNCATE.\n"
@@ -877,11 +881,14 @@ database_agent = LlmAgent(
         '  "columns_meta": [{"key": "col_name", "header": "Col Name", "type": "currency|numeric|string|date"}],\n'
         '  "results": [ ... array of row objects from run_readonly_sql ... ],\n'
         '  "columns": null,\n'
-        '  "insights": ["Insight 1.", "Insight 2.", "Insight 3."],\n'
+        '  "insights": ["Insight 1.", "Insight 2.", "Insight 3.", "Insight 4."],\n'
         '  "summary": "2-4 sentence explanation of the results.",\n'
         '  "greetings": null,\n'
         '  "error": null\n'
         "}\n\n"
+        "INSIGHTS RULE: For every data query that returns results you MUST include exactly 3-4 insights. "
+        "Never return an empty insights array when results are present. "
+        "Insights must explain patterns, highlight top/bottom performers, flag anomalies, or give business context.\n\n"
         "Greeting (hello/hi/good morning): {\"greetings\": \"Hello! I am Ayra ...\", all others null}.\n"
         "Capabilities question: explain Ayra can analyse customers/sales/orders/products/invoices/RFM in 'summary'; sql_query null.\n"
         "Irrelevant question: {\"error\": \"This assistant focuses on sales and business data analysis.\", all others null}.\n"
