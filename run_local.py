@@ -233,6 +233,58 @@ def list_databases() -> JSONResponse:
     return JSONResponse({"connections": connections, "default": default})
 
 
+@app.get("/salespersons")
+def salespersons_list(db_alias: str = "") -> JSONResponse:
+    """Return distinct salesperson IDs + names for the sidebar dropdown."""
+    from agentic_rag.connections import default_alias, get_connection, resolve_password
+
+    alias = db_alias or default_alias()
+    cfg = get_connection(alias)
+    if not cfg:
+        return JSONResponse({"salespersons": []})
+
+    db_type = cfg.get("db_type", "postgres")
+    host = cfg.get("host", "")
+    port = int(cfg.get("port", 1433))
+    database = cfg.get("database", "")
+    user = cfg.get("user", "")
+    try:
+        pw = resolve_password(cfg)
+    except Exception:
+        return JSONResponse({"salespersons": []})
+
+    sql = (
+        "SELECT DISTINCT salesperson_id, salesperson_name "
+        "FROM vw_salesperson_orders_summary "
+        "ORDER BY salesperson_name"
+    )
+    try:
+        if db_type == "mssql":
+            import pymssql  # type: ignore
+            cn = pymssql.connect(
+                server=host, port=str(port), user=user,
+                password=pw, database=database, timeout=8,
+            )
+        else:
+            import psycopg2  # type: ignore
+            cn = psycopg2.connect(
+                host=host, port=port, user=user,
+                password=pw, dbname=database, connect_timeout=8,
+            )
+        cur = cn.cursor()
+        cur.execute(sql)
+        rows = cur.fetchall()
+        cn.close()
+        result = [
+            {"id": str(r[0]), "name": str(r[1] or r[0])}
+            for r in rows
+            if r[0]
+        ]
+        return JSONResponse({"salespersons": result})
+    except Exception as exc:
+        return JSONResponse({"salespersons": [], "error": str(exc)})
+
+
 @app.get("/healthz/db")
 def healthz_db() -> JSONResponse:
     """Diagnostic: test TCP connectivity to all configured DB hosts."""
