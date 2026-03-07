@@ -44,10 +44,12 @@ function updateRbacBar() {
   if (el.salespersonBar) {
     el.salespersonBar.style.display = (lvl === '3' || lvl === '5') ? 'flex' : 'none';
   }
-  // Update placeholder to reflect the role context
-  if (el.sidebarSalespersonId) {
-    el.sidebarSalespersonId.placeholder =
-      lvl === '3' ? 'Manager ID (e.g. F101)' : 'Salesperson ID (e.g. F1010)';
+  // Update first (empty) option label to reflect the role context
+  if (el.sidebarSalespersonId && el.sidebarSalespersonId.tagName === 'SELECT') {
+    const first = el.sidebarSalespersonId.options[0];
+    if (first && first.value === '') {
+      first.textContent = lvl === '3' ? '— select manager ID —' : '— select salesperson —';
+    }
   }
 }
 
@@ -425,8 +427,44 @@ async function fetchDatabases() {
     state.dbAlias = el.dbAlias.value;
     localStorage.setItem('dbAlias', state.dbAlias);
     updateDbBadge();
+    fetchSalespersons();            // pre-load salesperson dropdown for this DB
   } catch {
     // Server not up yet or no /databases endpoint — leave selector as-is
+  }
+}
+
+async function fetchSalespersons() {
+  const sel = el.sidebarSalespersonId;
+  if (!sel || sel.tagName !== 'SELECT') return;
+
+  const base = (el.apiBase.value.trim() || state.apiBase || '').replace(/\/$/, '');
+  const alias = state.dbAlias || '';
+  const url = `${base || ''}/salespersons${alias ? `?db_alias=${encodeURIComponent(alias)}` : ''}`;
+
+  try {
+    const authHeaders = await getAuthHeaders();
+    const res = await fetch(url, { headers: authHeaders });
+    if (!res.ok) return;
+    const data = await res.json();
+    const list = data.salespersons || [];
+    if (!list.length) return;
+
+    const prev = sel.value || state.salespersonId;
+    const lvl  = state.replevel || '1';
+    const emptyLabel = lvl === '3' ? '— select manager ID —' : '— select salesperson —';
+
+    sel.innerHTML = `<option value="">${emptyLabel}</option>`;
+    list.forEach(({ id, name }) => {
+      const opt = document.createElement('option');
+      opt.value = id;
+      opt.textContent = name && name !== id ? `${id}  —  ${name}` : id;
+      sel.appendChild(opt);
+    });
+
+    // Restore previously selected value if it still exists
+    if (prev) sel.value = prev;
+  } catch {
+    // Server not available — leave dropdown as-is
   }
 }
 
@@ -782,6 +820,7 @@ if (el.dbAlias) {
     state.dbAlias = el.dbAlias.value;
     localStorage.setItem('dbAlias', state.dbAlias);
     state.sessionId = '';
+    fetchSalespersons();           // refresh salesperson dropdown for the new DB
     const selected = el.dbAlias.options[el.dbAlias.selectedIndex];
     const dbLabel = selected ? selected.textContent : state.dbAlias;
 
@@ -878,12 +917,6 @@ fetchDatabases();
     el.rbacApplyBtn.addEventListener('click', applyRoleChange);
   }
 
-  // Allow pressing Enter in the salesperson ID field to apply
-  if (el.sidebarSalespersonId) {
-    el.sidebarSalespersonId.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') { e.preventDefault(); applyRoleChange(); }
-    });
-  }
 })();
 
 // Re-fetch DB list when API base URL is changed

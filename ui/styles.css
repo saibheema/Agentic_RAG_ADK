@@ -312,6 +312,25 @@ body {
 }
 .sidebar-sp-input:focus { border-color: var(--focus); }
 
+.sidebar-sp-select {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.82rem;
+  padding: 5px 7px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--text);
+  outline: none;
+  cursor: pointer;
+  transition: border-color var(--dur) ease;
+  /* prevent overflow in narrow sidebar */
+  max-width: 100%;
+  text-overflow: ellipsis;
+}
+.sidebar-sp-select:focus { border-color: var(--focus); }
+.sidebar-sp-select option { background: var(--surface); color: var(--text); }
+
 .rbac-apply-btn {
   font-size: 0.72rem;
   font-weight: 600;
