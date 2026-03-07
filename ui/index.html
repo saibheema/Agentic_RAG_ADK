@@ -82,6 +82,25 @@
       <div id="dbBadge" class="db-badge" style="display:none"></div>
     </div>
 
+    <!-- RBAC Role Selector -->
+    <div class="sidebar-role" id="rbacBar" data-replevel="1">
+      <span class="role-dot" id="roleDot"></span>
+      <label class="role-label" for="sidebarReplevel">Role</label>
+      <select id="sidebarReplevel" class="sidebar-role-select" title="Access level — applies on next session">
+        <option value="1">Internal</option>
+        <option value="3">Manager</option>
+        <option value="5">Salesperson</option>
+      </select>
+    </div>
+    <!-- ID row — visible for Manager (3) and Salesperson (5) -->
+    <div class="sidebar-sp-bar" id="salespersonBar" style="display:none">
+      <input id="sidebarSalespersonId" class="sidebar-sp-input" type="text"
+             placeholder="ID (e.g. F1010)" maxlength="16"
+             autocomplete="off" spellcheck="false" />
+      <button id="rbacApplyBtn" class="rbac-apply-btn" type="button"
+              title="Apply role and start a new session">Apply</button>
+    </div>
+
     <!-- Footer: user + controls -->
     <div class="sidebar-footer">
       <div id="userPill" class="sidebar-user" style="display:none">
@@ -120,6 +139,23 @@
           <label>
             <span>Session ID</span>
             <input id="sessionId" type="text" readonly placeholder="(auto-assigned)" />
+          </label>
+          <!-- RBAC context — forwarded to the agent via ADK session state -->
+          <label>
+            <span>Role Level</span>
+            <select id="replevel" title="Controls salesperson-level row filtering in SQL queries">
+              <option value="1">1 — Internal (full access)</option>
+              <option value="3">3 — Manager</option>
+              <option value="5">5 — Salesperson</option>
+            </select>
+          </label>
+          <label>
+            <span>Salesperson ID</span>
+            <input id="salespersonId" type="text" placeholder="e.g. F1010" autocomplete="off" spellcheck="false" />
+          </label>
+          <label>
+            <span>Role Name</span>
+            <input id="roleName" type="text" placeholder="e.g. Sales Manager" autocomplete="off" />
           </label>
         </div>
         <div class="settings-actions">

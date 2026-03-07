@@ -232,6 +232,107 @@ body {
 
 .sidebar.collapsed .sidebar-db { display: none; }
 
+/* ---- RBAC role bar ---------------------------------------- */
+.sidebar-role {
+  margin: 0 10px 0;
+  padding: 6px 12px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  transition: border-color var(--dur) ease, background var(--dur) ease;
+}
+
+.sidebar.collapsed .sidebar-role { display: none; }
+
+.role-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--xmuted);
+  flex-shrink: 0;
+  transition: background var(--dur) ease;
+}
+
+/* Level colours */
+.sidebar-role[data-replevel="1"] .role-dot { background: #22c55e; }
+.sidebar-role[data-replevel="3"] .role-dot { background: #6366f1; }
+.sidebar-role[data-replevel="5"] .role-dot { background: #f59e0b; }
+
+.role-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: var(--xmuted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  cursor: default;
+  flex-shrink: 0;
+}
+
+.sidebar-role-select {
+  background: transparent;
+  color: var(--accent);
+  border: none;
+  font: inherit;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  outline: none;
+  flex: 1;
+  min-width: 0;
+  transition: color var(--dur) ease;
+}
+.sidebar-role-select:hover { color: var(--accent-h); }
+
+/* Salesperson ID row (conditionally shown) */
+.sidebar-sp-bar {
+  margin: 4px 10px 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.sidebar.collapsed .sidebar-sp-bar { display: none !important; }
+
+.sidebar-sp-input {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.82rem;
+  padding: 5px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--text);
+  outline: none;
+  transition: border-color var(--dur) ease;
+}
+.sidebar-sp-input:focus { border-color: var(--focus); }
+
+.rbac-apply-btn {
+  font-size: 0.72rem;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--accent);
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: background var(--dur) ease, color var(--dur) ease;
+}
+.rbac-apply-btn:hover {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* Mobile: show role bar when sidebar is open */
+.sidebar.mobile-open .sidebar-role { display: flex !important; }
+
 /* ---- Sidebar footer --------------------------------------- */
 .sidebar-footer {
   border-top: 1px solid var(--border);
@@ -853,6 +954,77 @@ code.sql-display {
   letter-spacing: 0.04em;
 }
 
+/* ---- Structured agent response ---------------------------- */
+
+.response-error {
+  background: #fef2f2;
+  border: 1px solid #fca5a5;
+  border-radius: var(--rs);
+  color: #b91c1c;
+  padding: 10px 14px;
+  font-size: 0.88rem;
+}
+
+[data-theme="dark"] .response-error {
+  background: #3b0a0a;
+  border-color: #dc2626;
+  color: #f87171;
+}
+
+.no-results {
+  color: var(--muted);
+  font-style: italic;
+  font-size: 0.88rem;
+  margin: 4px 0;
+}
+
+/* Insights panel */
+.insights-panel {
+  margin-top: 10px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--rs);
+  padding: 10px 14px;
+}
+
+.insights-title {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 6px;
+}
+
+.insights-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 0.875rem;
+  line-height: 1.6;
+  color: var(--text);
+}
+
+.insights-list li + li {
+  margin-top: 2px;
+}
+
+/* Type-aware table cell alignment */
+td.cell-currency,
+td.cell-numeric {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-family: 'Menlo', 'Monaco', 'Cascadia Code', monospace;
+  font-size: 0.88rem;
+}
+
+td.cell-currency {
+  color: #16a34a;
+}
+
+[data-theme="dark"] td.cell-currency {
+  color: #4ade80;
+}
+
 /* ---- Composer --------------------------------------------- */
 .composer {
   flex-shrink: 0;
@@ -1169,7 +1341,8 @@ code.sql-display {
   .sidebar.mobile-open .sidebar-name,
   .sidebar.mobile-open .sidebar-user-text,
   .sidebar.mobile-open .sign-out-btn,
-  .sidebar.mobile-open .sidebar-db { display: revert !important; opacity: 1 !important; max-width: revert !important; }
+  .sidebar.mobile-open .sidebar-db,
+  .sidebar.mobile-open .sidebar-role { display: revert !important; opacity: 1 !important; max-width: revert !important; }
 
   /* Main area always full-width (sidebar is positioned fixed) */
   .main-content { width: 100%; }

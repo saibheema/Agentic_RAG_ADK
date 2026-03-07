@@ -29,8 +29,10 @@ def test_rag_agent_has_retrieve_tool() -> None:
 
 
 def test_agents_use_same_model() -> None:
-    assert root_agent.model == database_agent.model
-    assert root_agent.model == rag_agent.model
+    # database_agent and rag_agent use the same heavy model.
+    # root_agent (router) intentionally uses a lighter model to reduce latency.
+    assert database_agent.model == rag_agent.model
+    assert root_agent.model != database_agent.model
 
 
 def test_database_agent_description_mentions_sql() -> None:

@@ -10,6 +10,7 @@ import os
 import pytest
 
 from agentic_rag.agent import (
+    _check_rbac_access,
     _inject_limit_if_missing,
     _is_mssql,
     _normalized_sql,
@@ -159,6 +160,32 @@ class TestValidateReadonlySql:
     def test_allows_joins(self):
         ok, _ = _validate_readonly_sql(
             "SELECT o.order_id, c.full_name FROM orders o JOIN customers c ON o.customer_id = c.customer_id",
+            ALLOWED_TABLES,
+        )
+        assert ok
+
+    def test_rejects_string_agg_distinct(self):
+        """STRING_AGG(DISTINCT ...) is not supported and must be blocked."""
+        ok, reason = _validate_readonly_sql(
+            "SELECT STRING_AGG(DISTINCT product_name, ', ') FROM products",
+            ALLOWED_TABLES,
+        )
+        assert not ok
+        assert "STRING_AGG" in reason
+
+    def test_rejects_string_agg_distinct_case_insensitive(self):
+        """Guardrail must fire regardless of case."""
+        ok, reason = _validate_readonly_sql(
+            "SELECT string_agg(distinct product_name, ', ') FROM products",
+            ALLOWED_TABLES,
+        )
+        assert not ok
+        assert "STRING_AGG" in reason
+
+    def test_allows_string_agg_without_distinct(self):
+        """Plain STRING_AGG (no DISTINCT) is permitted."""
+        ok, _ = _validate_readonly_sql(
+            "SELECT STRING_AGG(product_name, ', ') FROM products",
             ALLOWED_TABLES,
         )
         assert ok
@@ -319,3 +346,86 @@ class TestIsMssql:
     def test_sql_server_detected(self):
         self._set_db_type("sql_server")
         assert _is_mssql()
+
+
+# ── _check_rbac_access ───────────────────────────────────────────────────────
+
+
+class TestCheckRbacAccess:
+    """Tests for the RBAC row-level access guardrail (pure function, no DB)."""
+
+    SQL_WITH_ID  = "SELECT TOP 5 OrderID FROM vw_orders WHERE salesperson_id = 'F1010'"
+    SQL_LIKE_ID  = "SELECT TOP 5 OrderID FROM vw_orders WHERE salesperson_id LIKE 'F10%'"
+    SQL_NO_ID    = "SELECT TOP 5 OrderID FROM vw_orders"
+
+    # ── Level 1 (Internal) — unrestricted ─────────────────────────────────
+    def test_level1_no_salesperson_id_passes(self):
+        ok, _ = _check_rbac_access(self.SQL_NO_ID, replevel=1, salesperson_id="")
+        assert ok
+
+    def test_level1_with_salesperson_id_still_passes(self):
+        """Level 1 users are never restricted even if a salesperson_id is present."""
+        ok, _ = _check_rbac_access(self.SQL_NO_ID, replevel=1, salesperson_id="F1010")
+        assert ok
+
+    # ── Level 5 (Salesperson) — must include exact ID ────────────────────
+    def test_level5_sql_contains_id_passes(self):
+        ok, _ = _check_rbac_access(self.SQL_WITH_ID, replevel=5, salesperson_id="F1010")
+        assert ok
+
+    def test_level5_sql_missing_id_fails(self):
+        ok, msg = _check_rbac_access(self.SQL_NO_ID, replevel=5, salesperson_id="F1010")
+        assert not ok
+        assert "replevel=5" in msg
+        assert "F1010" in msg
+
+    def test_level5_case_insensitive_match(self):
+        """ID match should be case-insensitive."""
+        sql = "SELECT * FROM vw_orders WHERE salesperson_id = 'f1010'"
+        ok, _ = _check_rbac_access(sql, replevel=5, salesperson_id="F1010")
+        assert ok
+
+    def test_level5_no_salesperson_id_configured_passes(self):
+        """If no salesperson_id is stored in session, don't block (agent will handle)."""
+        ok, _ = _check_rbac_access(self.SQL_NO_ID, replevel=5, salesperson_id="")
+        assert ok
+
+    def test_level5_whitespace_only_id_treated_as_empty(self):
+        """Whitespace-only salesperson_id should be treated as not set."""
+        ok, _ = _check_rbac_access(self.SQL_NO_ID, replevel=5, salesperson_id="   ")
+        assert ok
+
+    # ── Level 3 (Manager) — must include ID prefix ───────────────────────
+    def test_level3_sql_contains_id_passes(self):
+        sql = "SELECT * FROM vw_orders WHERE salesperson_id LIKE 'F10%'"
+        ok, _ = _check_rbac_access(sql, replevel=3, salesperson_id="F10")
+        assert ok
+
+    def test_level3_sql_exact_id_also_passes(self):
+        """SQL with an exact = filter containing the ID should also pass level 3."""
+        ok, _ = _check_rbac_access(self.SQL_WITH_ID, replevel=3, salesperson_id="F1010")
+        assert ok
+
+    def test_level3_sql_missing_id_fails(self):
+        ok, msg = _check_rbac_access(self.SQL_NO_ID, replevel=3, salesperson_id="F10")
+        assert not ok
+        assert "replevel=3" in msg
+        assert "F10" in msg
+
+    def test_level3_case_insensitive_match(self):
+        sql = "SELECT * FROM vw_orders WHERE salesperson_id LIKE 'f10%'"
+        ok, _ = _check_rbac_access(sql, replevel=3, salesperson_id="F10")
+        assert ok
+
+    def test_level3_no_salesperson_id_configured_passes(self):
+        ok, _ = _check_rbac_access(self.SQL_NO_ID, replevel=3, salesperson_id="")
+        assert ok
+
+    # ── Error message content ─────────────────────────────────────────────
+    def test_level5_error_mentions_equals_filter(self):
+        _, msg = _check_rbac_access(self.SQL_NO_ID, replevel=5, salesperson_id="F1010")
+        assert "salesperson_id = 'F1010'" in msg
+
+    def test_level3_error_mentions_like_filter(self):
+        _, msg = _check_rbac_access(self.SQL_NO_ID, replevel=3, salesperson_id="F10")
+        assert "salesperson_id LIKE 'F10%'" in msg
