@@ -4,6 +4,10 @@ const state = {
   userId: localStorage.getItem('userId') || 'web-user',
   sessionId: '',
   dbAlias: localStorage.getItem('dbAlias') || '',
+  // RBAC context — forwarded to the agent via session state
+  replevel: localStorage.getItem('replevel') || '1',          // 1=Internal, 3=Manager, 5=Salesperson
+  salespersonId: localStorage.getItem('salespersonId') || '', // e.g. F1010
+  roleName: localStorage.getItem('roleName') || '',           // display role name
 };
 
 const el = {
@@ -13,6 +17,16 @@ const el = {
   sessionId: document.getElementById('sessionId'),
   dbAlias: document.getElementById('dbAlias'),
   dbBadge: document.getElementById('dbBadge'),
+  // RBAC inputs (settings panel — advanced)
+  replevel: document.getElementById('replevel'),
+  salespersonId: document.getElementById('salespersonId'),
+  roleName: document.getElementById('roleName'),
+  // RBAC quick-switcher (sidebar — always visible)
+  rbacBar: document.getElementById('rbacBar'),
+  sidebarReplevel: document.getElementById('sidebarReplevel'),
+  sidebarSalespersonId: document.getElementById('sidebarSalespersonId'),
+  salespersonBar: document.getElementById('salespersonBar'),
+  rbacApplyBtn: document.getElementById('rbacApplyBtn'),
   chat: document.getElementById('chat'),
   prompt: document.getElementById('prompt'),
   chatForm: document.getElementById('chatForm'),
@@ -22,13 +36,36 @@ const el = {
   msgTemplate: document.getElementById('msgTemplate'),
 };
 
+function updateRbacBar() {
+  const lvl = state.replevel || '1';
+  // Update sidebar role dot colour
+  if (el.rbacBar) el.rbacBar.dataset.replevel = lvl;
+  // Show ID input for managers (level 3) and salespersons (level 5)
+  if (el.salespersonBar) {
+    el.salespersonBar.style.display = (lvl === '3' || lvl === '5') ? 'flex' : 'none';
+  }
+  // Update placeholder to reflect the role context
+  if (el.sidebarSalespersonId) {
+    el.sidebarSalespersonId.placeholder =
+      lvl === '3' ? 'Manager ID (e.g. F101)' : 'Salesperson ID (e.g. F1010)';
+  }
+}
+
 function syncInputs() {
   el.apiBase.value = state.apiBase;
   el.appName.value = state.appName;
   el.userId.value = state.userId;
   el.sessionId.value = state.sessionId;
   if (el.dbAlias && state.dbAlias) el.dbAlias.value = state.dbAlias;
+  // Settings panel RBAC fields
+  if (el.replevel) el.replevel.value = state.replevel;
+  if (el.salespersonId) el.salespersonId.value = state.salespersonId;
+  if (el.roleName) el.roleName.value = state.roleName;
+  // Sidebar RBAC quick-switcher
+  if (el.sidebarReplevel) el.sidebarReplevel.value = state.replevel;
+  if (el.sidebarSalespersonId) el.sidebarSalespersonId.value = state.salespersonId;
   updateDbBadge();
+  updateRbacBar();
 }
 
 function updateDbBadge() {
@@ -51,10 +88,16 @@ function saveSettings() {
   state.appName = el.appName.value.trim();
   state.userId = el.userId.value.trim();
   state.dbAlias = el.dbAlias ? el.dbAlias.value : state.dbAlias;
+  state.replevel = el.replevel ? el.replevel.value : state.replevel;
+  state.salespersonId = el.salespersonId ? el.salespersonId.value.trim() : state.salespersonId;
+  state.roleName = el.roleName ? el.roleName.value.trim() : state.roleName;
   localStorage.setItem('apiBase', state.apiBase);
   localStorage.setItem('appName', state.appName);
   localStorage.setItem('userId', state.userId);
   localStorage.setItem('dbAlias', state.dbAlias);
+  localStorage.setItem('replevel', state.replevel);
+  localStorage.setItem('salespersonId', state.salespersonId);
+  localStorage.setItem('roleName', state.roleName);
 }
 
 function appendMessage(kind, label, bodyRenderer) {
@@ -141,6 +184,153 @@ function renderTable(target, rows) {
   table.appendChild(tbody);
   scroll.appendChild(table);
   target.appendChild(scroll);
+}
+
+/* ── Structured agent response (JSON output format) ──────── */
+
+/**
+ * Return true if text is the agent's structured JSON response envelope.
+ * Requires at least the 'sql_query' key signature.
+ */
+function _isStructuredResponse(text) {
+  if (!text || typeof text !== 'string') return false;
+  const trimmed = text.trim();
+  if (!trimmed.startsWith('{')) return false;
+  try {
+    const json = JSON.parse(trimmed);
+    return (
+      json !== null &&
+      typeof json === 'object' &&
+      !Array.isArray(json) &&
+      ('sql_query' in json || 'greetings' in json || ('error' in json && !('ok' in json)))
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Render a table with type-aware cell formatting using columns_meta.
+ * @param {HTMLElement} target
+ * @param {Array<object>} rows
+ * @param {Array<{key:string, header:string, type:string}>} columnsMeta
+ */
+function renderTypedTable(target, rows, columnsMeta) {
+  if (!rows || !rows.length) return;
+
+  const scroll = document.createElement('div');
+  scroll.className = 'table-scroll';
+
+  const table = document.createElement('table');
+  table.className = 'structured-table';
+
+  // Header
+  const thead = document.createElement('thead');
+  const trHead = document.createElement('tr');
+  columnsMeta.forEach((col) => {
+    const th = document.createElement('th');
+    th.textContent = col.header;
+    th.dataset.type = col.type;
+    trHead.appendChild(th);
+  });
+  thead.appendChild(trHead);
+
+  // Body
+  const tbody = document.createElement('tbody');
+  rows.forEach((row) => {
+    const tr = document.createElement('tr');
+    columnsMeta.forEach((col) => {
+      const td = document.createElement('td');
+      td.dataset.type = col.type;
+      const val = row[col.key];
+      if (col.type === 'currency' && val !== null && val !== undefined) {
+        const num = parseFloat(val);
+        td.textContent = isNaN(num) ? String(val) : '$' + num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        td.className = 'cell-currency';
+      } else if (col.type === 'numeric') {
+        const num = parseFloat(val);
+        td.textContent = (val !== null && val !== undefined && !isNaN(num)) ? num.toLocaleString() : (val ?? '');
+        td.className = 'cell-numeric';
+      } else if (col.type === 'date') {
+        td.textContent = (val !== null && val !== undefined) ? String(val).split('T')[0] : '';
+      } else {
+        td.textContent = String(val ?? '');
+      }
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  });
+
+  table.appendChild(thead);
+  table.appendChild(tbody);
+  scroll.appendChild(table);
+  target.appendChild(scroll);
+}
+
+/**
+ * Render the structured JSON response envelope returned by the database agent.
+ */
+function renderStructuredResponse(target, json) {
+  // Greeting
+  if (json.greetings) {
+    renderText(target, json.greetings);
+    return;
+  }
+
+  // Error from agent or database
+  if (json.error) {
+    const errorDiv = document.createElement('div');
+    errorDiv.className = 'response-error';
+    errorDiv.textContent = '\u26a0 ' + json.error;
+    target.appendChild(errorDiv);
+    return;
+  }
+
+  // Summary (shown first, above the data)
+  if (json.summary) {
+    renderText(target, json.summary);
+  }
+
+  // SQL query badge
+  if (json.sql_query) {
+    const sqlBox = document.createElement('code');
+    sqlBox.className = 'sql-display';
+    sqlBox.textContent = json.sql_query;
+    target.appendChild(sqlBox);
+  }
+
+  // Results table (typed if columns_meta present, plain otherwise)
+  if (json.results && json.results.length > 0) {
+    if (json.columns_meta && json.columns_meta.length > 0) {
+      renderTypedTable(target, json.results, json.columns_meta);
+    } else {
+      renderTable(target, json.results);
+    }
+  } else if (json.sql_query) {
+    const noData = document.createElement('p');
+    noData.className = 'no-results';
+    noData.textContent = 'No results found for this query.';
+    target.appendChild(noData);
+  }
+
+  // Insights panel
+  if (json.insights && json.insights.length > 0) {
+    const panel = document.createElement('div');
+    panel.className = 'insights-panel';
+    const title = document.createElement('div');
+    title.className = 'insights-title';
+    title.textContent = '\ud83d\udca1 Insights';
+    panel.appendChild(title);
+    const ul = document.createElement('ul');
+    ul.className = 'insights-list';
+    json.insights.forEach((insight) => {
+      const li = document.createElement('li');
+      li.textContent = insight;
+      ul.appendChild(li);
+    });
+    panel.appendChild(ul);
+    target.appendChild(panel);
+  }
 }
 
 function renderJson(target, value) {
@@ -244,10 +434,21 @@ async function createSession() {
   saveSettings();
   const url = `${state.apiBase}/apps/${encodeURIComponent(state.appName)}/users/${encodeURIComponent(state.userId)}/sessions`;
   const authHeaders = await getAuthHeaders();
+
+  // Build session state with DB alias + RBAC context forwarded to the agent
+  const sessionPayload = {};
+  if (state.dbAlias) sessionPayload.db_alias = state.dbAlias;
+  if (state.replevel) sessionPayload.replevel = parseInt(state.replevel, 10);
+  if (state.salespersonId) sessionPayload.salesperson_id = state.salespersonId;
+  if (state.roleName) sessionPayload.role_name = state.roleName;
+  // Derive user_name from Firebase auth if available, else fall back to userId
+  const currentUser = (typeof window.Auth !== 'undefined') ? window.Auth.currentUser() : null;
+  sessionPayload.user_name = (currentUser && (currentUser.displayName || currentUser.email)) || state.userId;
+
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders },
-    body: JSON.stringify(state.dbAlias ? { state: { db_alias: state.dbAlias } } : {}),
+    body: JSON.stringify({ state: sessionPayload }),
   });
 
   if (!res.ok) {
@@ -439,9 +640,17 @@ function renderRunEvents(events) {
   const lastText = [...steps].reverse().find((s) => s.type === 'text');
   console.log('[renderRunEvents] lastText:', lastText);
 
-  // render main answer
+  // ── Render main answer ──────────────────────────────────────────────────
+  let isStructuredJSON = false;
   if (lastText) {
-    appendMessage('agent', 'Assistant', (target) => renderText(target, lastText.text));
+    if (_isStructuredResponse(lastText.text)) {
+      // Agent returned the structured JSON envelope — render richly
+      isStructuredJSON = true;
+      const json = JSON.parse(lastText.text.trim());
+      appendMessage('agent', 'Assistant', (target) => renderStructuredResponse(target, json));
+    } else {
+      appendMessage('agent', 'Assistant', (target) => renderText(target, lastText.text));
+    }
   } else if (steps.length === 0) {
     appendMessage('agent', 'Assistant', (target) => renderText(target, '(No response)'));
   } else {
@@ -460,19 +669,25 @@ function renderRunEvents(events) {
     }
   }
 
-  // render tool result data tables inline (for the last tool response before the final answer)
-  const lastResponse = [...steps].reverse().find((s) => s.type === 'response');
-  if (lastResponse?.data) {
-    const resp = lastResponse.data;
-    if (resp.ok && resp.rows && resp.rows.length > 0) {
-      appendMessage('agent', `SQL Result (${resp.row_count} rows)`, (target) => {
-        // show executed SQL
-        const sqlBox = document.createElement('code');
-        sqlBox.className = 'sql-display';
-        sqlBox.textContent = resp.sql_executed;
-        target.appendChild(sqlBox);
-        renderTable(target, resp.rows);
-      });
+  // ── Render raw tool result tables (only when NOT a structured response) ──
+  // Structured JSON already embeds SQL + results inside renderStructuredResponse.
+  if (!isStructuredJSON) {
+    const lastResponse = [...steps].reverse().find((s) => s.type === 'response');
+    if (lastResponse?.data) {
+      const resp = lastResponse.data;
+      if (resp.ok && resp.rows && resp.rows.length > 0) {
+        appendMessage('agent', `SQL Result (${resp.row_count} rows)`, (target) => {
+          const sqlBox = document.createElement('code');
+          sqlBox.className = 'sql-display';
+          sqlBox.textContent = resp.sql_executed;
+          target.appendChild(sqlBox);
+          if (resp.columns_meta && resp.columns_meta.length > 0) {
+            renderTypedTable(target, resp.rows, resp.columns_meta);
+          } else {
+            renderTable(target, resp.rows);
+          }
+        });
+      }
     }
   }
 
@@ -597,6 +812,79 @@ if (el.dbAlias) {
 
 syncInputs();
 fetchDatabases();
+
+/* ── RBAC sidebar quick-switcher ────────────────────────── */
+(function initRbacBar() {
+  if (!el.sidebarReplevel) return;
+
+  const ROLE_LABELS = { '1': 'Internal', '3': 'Manager', '5': 'Salesperson' };
+
+  /** Apply role change: persist → update bar → recreate session */
+  async function applyRoleChange() {
+    const lvl  = el.sidebarReplevel.value;
+    const spId = (el.sidebarSalespersonId ? el.sidebarSalespersonId.value.trim() : '') || '';
+
+    // Require a salesperson/manager ID when switching to level 3 or 5
+    if ((lvl === '5' || lvl === '3') && !spId) {
+      if (el.sidebarSalespersonId) el.sidebarSalespersonId.focus();
+      return;
+    }
+
+    // Sync to state (also keeps settings panel in sync)
+    state.replevel    = lvl;
+    state.salespersonId = spId;
+    if (el.replevel)      el.replevel.value      = lvl;
+    if (el.salespersonId) el.salespersonId.value = spId;
+    localStorage.setItem('replevel',      lvl);
+    localStorage.setItem('salespersonId', spId);
+    updateRbacBar();
+
+    // Invalidate the current session — RBAC context bakes in at session creation
+    state.sessionId = '';
+
+    const roleLabel = ROLE_LABELS[lvl] || lvl;
+    const who = spId ? ` (${spId})` : '';
+    appendMessage('agent', 'System', (target) =>
+      renderText(target, `⏳ Switching to ${roleLabel}${who} — creating new session…`));
+
+    try {
+      setBusy(true);
+      await createSession();
+      appendMessage('agent', 'System', (target) =>
+        renderText(target, `✅ Now running as ${roleLabel}${who} (session: ${state.sessionId})`));
+    } catch (err) {
+      appendMessage('agent', 'Error', (target) =>
+        renderText(target, err instanceof Error ? err.message : String(err)));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Role select: show/hide salesperson bar; only Internal (1) applies immediately
+  el.sidebarReplevel.addEventListener('change', () => {
+    const lvl = el.sidebarReplevel.value;
+    updateRbacBar();
+    if (lvl === '1') {
+      // Internal — no salesperson ID needed; apply immediately
+      applyRoleChange();
+    } else {
+      // Manager (3) and Salesperson (5) both require an ID — focus input, wait for Apply
+      if (el.sidebarSalespersonId) el.sidebarSalespersonId.focus();
+    }
+  });
+
+  // Apply button (level 5)
+  if (el.rbacApplyBtn) {
+    el.rbacApplyBtn.addEventListener('click', applyRoleChange);
+  }
+
+  // Allow pressing Enter in the salesperson ID field to apply
+  if (el.sidebarSalespersonId) {
+    el.sidebarSalespersonId.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); applyRoleChange(); }
+    });
+  }
+})();
 
 // Re-fetch DB list when API base URL is changed
 el.apiBase.addEventListener('change', () => {

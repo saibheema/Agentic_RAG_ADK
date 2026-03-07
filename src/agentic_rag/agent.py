@@ -24,6 +24,7 @@ from google.adk.agents import LlmAgent
 from google.adk.planners import BuiltInPlanner
 from google.adk.tools import FunctionTool, ToolContext
 from google.genai import types
+from agentic_rag.query_rewriter import rewrite_query
 
 _log = logging.getLogger(__name__)
 
@@ -233,6 +234,40 @@ def _to_rows(cursor) -> list[dict[str, Any]]:
     return out
 
 
+def _classify_column_type(col_name: str, sample_values: list) -> str:  # type: ignore[type-arg]
+    """Infer display type from column name and a sample of its values.
+
+    Returns one of: currency | numeric | string | date
+    as defined in the output spec (Developer Implementation Prompt).
+    """
+    col = col_name.lower()
+
+    _DATE_PARTS = (
+        "date", "_at", "_on", "time", "created", "updated",
+        "modified", "ordered", "shipped", "delivered",
+        "invoiced", "due", "period",
+    )
+    _CURRENCY_PARTS = (
+        "price", "amount", "total", "cost", "revenue",
+        "sales", "value", "balance", "charge", "fee",
+        "margin", "profit", "payment", "discount", "tax", "subtotal",
+    )
+
+    if any(kw in col for kw in _DATE_PARTS):
+        return "date"
+
+    if any(kw in col for kw in _CURRENCY_PARTS):
+        non_null = [v for v in sample_values if v is not None]
+        if not non_null or all(isinstance(v, (int, float)) for v in non_null):
+            return "currency"
+
+    non_null = [v for v in sample_values if v is not None]
+    if non_null and all(isinstance(v, (int, float)) for v in non_null):
+        return "numeric"
+
+    return "string"
+
+
 def _normalized_sql(sql: str) -> str:
     return re.sub(r"\s+", " ", sql.strip()).strip()
 
@@ -280,6 +315,10 @@ def _validate_readonly_sql(
     if " sys." in padded:
         return False, "System schemas are blocked (sys)"
 
+    # Block STRING_AGG(DISTINCT ...) — unsupported in SQL Server (T-SQL)
+    if re.search(r"\bstring_agg\s*\(\s*distinct\b", normalized):
+        return False, "Forbidden syntax: STRING_AGG(DISTINCT ...) is not supported"
+
     return True, "ok"
 
 
@@ -292,10 +331,15 @@ def _inject_limit_if_missing(sql: str, max_rows: int, db_type: str = "") -> str:
     # • Scalar aggregates (SUM/COUNT/AVG/MIN/MAX with no GROUP BY): always
     #   return exactly 1 row, so a limit is meaningless.
     # In both cases the LLM should control the result shape explicitly.
-    _has_group_by = bool(re.search(r'\bgroup\s+by\b', normalized, re.IGNORECASE))
-    _has_scalar_agg = bool(
-        re.search(r'\b(SUM|COUNT|AVG|MIN|MAX)\s*\(', normalized, re.IGNORECASE)
-    )
+    #
+    # Scope these checks to the *outer* SELECT only — CTEs often contain GROUP BY
+    # internally while the outer projection is a plain SELECT that does need TOP/LIMIT.
+    # rfind('select') on the normalised string reliably finds the outermost SELECT
+    # because CTE/subquery SELECTs always appear earlier in the string.
+    _last_sel = normalized.rfind('select')
+    _outer = normalized[_last_sel:] if _last_sel != -1 else normalized
+    _has_group_by = bool(re.search(r'\bgroup\s+by\b', _outer))
+    _has_scalar_agg = bool(re.search(r'\b(SUM|COUNT|AVG|MIN|MAX)\s*\(', _outer))
     if _has_group_by or _has_scalar_agg:
         return sql
 
@@ -391,9 +435,15 @@ def get_schema_metadata(tool_context: ToolContext) -> dict[str, Any]:
         if entry and (time.time() - entry["fetched_at"]) < _SCHEMA_CACHE_TTL:
             age_h = (time.time() - entry["fetched_at"]) / 3600
             _log.debug("Schema cache hit (age %.1fh, TTL %dh)", age_h, _SCHEMA_CACHE_TTL // 3600)
-            # Always inject a fresh 'today' — never serve a cached date
+            # Always inject a fresh 'today' and live access_context — never serve stale values
             cached = dict(entry["data"])
             cached["today"] = datetime.date.today().isoformat()
+            cached["access_context"] = {
+                "user_name": tool_context.state.get("user_name", ""),
+                "role_name": tool_context.state.get("role_name", ""),
+                "replevel": int(tool_context.state.get("replevel", 1)),
+                "salesperson_id": str(tool_context.state.get("salesperson_id", "")),
+            }
             return cached  # type: ignore[return-value]
 
     conn = _connect(cfg)  # MUST pass cfg so the right DB alias is used
@@ -500,9 +550,46 @@ def get_schema_metadata(tool_context: ToolContext) -> dict[str, Any]:
             )
 
         result["today"] = datetime.date.today().isoformat()
+        result["access_context"] = {
+            "user_name": tool_context.state.get("user_name", ""),
+            "role_name": tool_context.state.get("role_name", ""),
+            "replevel": int(tool_context.state.get("replevel", 1)),
+            "salesperson_id": str(tool_context.state.get("salesperson_id", "")),
+        }
         return result
     finally:
         conn.close()
+
+
+def _check_rbac_access(sql: str, replevel: int, salesperson_id: str) -> tuple[bool, str]:
+    """Enforce row-level access control on auto-generated SQL.
+
+    Returns (allowed: bool, error_message: str).
+    Pure function — no I/O, fully unit-testable.
+
+    Rules:
+      replevel 1 (Internal) — full access, no restriction.
+      replevel 3 (Manager)  — SQL must contain the manager's salesperson_id
+                              (expected to appear in a LIKE '{id}%' clause).
+      replevel 5 (Salesperson) — SQL must contain the exact salesperson_id
+                              (expected in WHERE salesperson_id = '{id}').
+    """
+    spid = salesperson_id.strip()
+    if replevel == 5 and spid:
+        if spid.lower() not in sql.lower():
+            return False, (
+                f"Access control: salesperson-level (replevel=5) queries must "
+                f"include a filter for salesperson_id = '{spid}'. "
+                f"Add WHERE salesperson_id = '{spid}' to the query and retry."
+            )
+    elif replevel == 3 and spid:
+        if spid.lower() not in sql.lower():
+            return False, (
+                f"Access control: manager-level (replevel=3) queries must "
+                f"include a filter for salesperson_id LIKE '{spid}%'. "
+                f"Add WHERE salesperson_id LIKE '{spid}%' to the query and retry."
+            )
+    return True, "ok"
 
 
 def run_readonly_sql(sql: str, tool_context: ToolContext) -> dict[str, Any]:
@@ -527,6 +614,13 @@ def run_readonly_sql(sql: str, tool_context: ToolContext) -> dict[str, Any]:
 
     final_sql = _inject_limit_if_missing(sql, max_rows, cfg["db_type"])
 
+    # ── RBAC guardrail: levels 3 and 5 must filter by their salesperson ID ────
+    replevel = int(tool_context.state.get("replevel", 1))
+    salesperson_id = str(tool_context.state.get("salesperson_id", "")).strip()
+    rbac_ok, rbac_error = _check_rbac_access(final_sql, replevel, salesperson_id)
+    if not rbac_ok:
+        return {"ok": False, "error": rbac_error}
+
     conn = _connect(cfg)
     try:
         cur = conn.cursor()
@@ -544,12 +638,23 @@ def run_readonly_sql(sql: str, tool_context: ToolContext) -> dict[str, Any]:
         # Apply PII masking to results before returning to the LLM
         rows = _mask_rows(rows)
 
+        # Build columns_meta for structured JSON output
+        columns_meta = [
+            {
+                "key": col,
+                "header": " ".join(w.capitalize() for w in col.replace("_", " ").split()),
+                "type": _classify_column_type(col, [row.get(col) for row in rows[:5]]),
+            }
+            for col in columns
+        ]
+
         return {
             "ok": True,
             "active_db": db_alias or "env-config",
             "sql_executed": _normalized_sql(final_sql),
             "row_count": len(rows),
             "columns": columns,
+            "columns_meta": columns_meta,
             "rows": rows,
         }
     except Exception as exc:
@@ -689,59 +794,101 @@ database_agent = LlmAgent(
     description=(
         "Specialist for structured data questions. Handles anything about "
         "orders, customers, products, sales, counts, totals, rankings, "
-        "averages, or any question answerable with SQL."
+        "averages, or any question answerable with SQL. Also handles greetings."
     ),
     instruction=(
-        "You are a database SQL agent. Your SOLE purpose is to answer "
-        "questions by querying a database using SQL.\n\n"
-        "## STRICT RULES\n"
-        "- You have EXACTLY two tools: get_schema_metadata and run_readonly_sql.\n"
-        "- Your ONLY valid actions are: (a) call one of these two tools, or "
-        "(b) reply with natural language text.\n"
-        "- NEVER output code (Python, JavaScript, etc.), NEVER call print(), "
-        "NEVER generate function calls other than these two tools.\n"
-        "- The 'sql' parameter of run_readonly_sql must contain a SQL query "
-        "string — never programming code.\n\n"
-        "## DATE & YEAR RULES — MANDATORY\n"
-        "get_schema_metadata always returns a 'today' field with the real "
-        "current date (e.g. '2026-03-05').\n"
-        "RULE 1 — Explicit user year: if the user says a specific year "
-        "(e.g. '2025', '2024'), use that exact year literal in the SQL. "
-        "Do NOT second-guess or recompute it.\n"
-        "RULE 2 — Relative references: derive from 'today' — NEVER from "
-        "training knowledge:\n"
-        "- 'this year' / 'current year'  → YEAR(today)      e.g. 2026\n"
-        "- 'last year'                   → YEAR(today) - 1  e.g. 2025\n"
-        "- 'year before last'            → YEAR(today) - 2  e.g. 2024\n"
-        "- 'this month'                  → MONTH+YEAR of today\n"
-        "- 'last month'                  → previous calendar month\n"
-        "For T-SQL: use YEAR(col), DATEPART(year, col), or date range "
-        "col >= '2025-01-01' AND col < '2026-01-01'.\n\n"
+        "You are Ayra, a professional sales data assistant.\n"
+        "You convert natural language into SQL queries and return structured JSON.\n\n"
+
+        "## WORKFLOW — ALWAYS FOLLOW THIS EXACT ORDER\n"
+        "Step 1. Call rewrite_query with the user's LATEST message to normalise IDs and terminology.\n"
+        "Step 2. Call get_schema_metadata — returns db_type, tables/columns/samples, today's date, and access_context.\n"
+        "Step 3. Identify the correct SQL view from VIEW ROUTING below.\n"
+        "Step 4. Write ONE read-only SELECT query applying ACCESS CONTROL, DISPLAY RULES, and RESULT LIMITS.\n"
+        "Step 5. Call run_readonly_sql EXACTLY ONCE.\n"
+        "Step 6. Return ONLY the JSON response described in OUTPUT FORMAT.\n\n"
+
+        "## ACCESS CONTROL — MANDATORY\n"
+        "get_schema_metadata returns access_context: {user_name, role_name, replevel, salesperson_id}.\n"
+        "  replevel == 5 (Salesperson): every query MUST have  WHERE salesperson_id = '{salesperson_id}'.\n"
+        "  replevel == 3 (Manager):     every query MUST have  WHERE salesperson_id LIKE '{salesperson_id}%'.\n"
+        "                               For team-only reports exclude the manager's own row.\n"
+        "  replevel == 1 (Internal):    no salesperson filter — full access.\n\n"
+
+        "## SQL VIEW ROUTING — MANDATORY\n"
+        "Always use the designated view for each intent. Never query base tables when a view exists.\n"
+        "  product_inquiry          → dbo.vw_wholesale_product_catalog\n"
+        "  order_summary            → dbo.vw_salesperson_orders_summary\n"
+        "  order_details            → dbo.vw_salesperson_orders_detail\n"
+        "  order_shipment_summary   → dbo.vw_salesperson_pending_shipments_summary\n"
+        "  order_shipment_details   → dbo.vw_salesperson_pending_shipments_detail\n"
+        "  invoice_summary          → dbo.vw_salesperson_invoices_summary\n"
+        "  invoice_details          → dbo.vw_salesperson_invoices_detail\n"
+        "  promotion_inquiry        → dbo.vw_CurrentSpecials\n"
+        "  account_details          → dbo.vw_salesperson_customers_master\n\n"
+
+        "## SQL RULES\n"
+        "- SELECT statements ONLY. Never INSERT / UPDATE / DELETE / DROP / ALTER / TRUNCATE.\n"
+        "- Never SELECT *. Always list columns explicitly.\n"
+        "- Never use STRING_AGG(DISTINCT ...) — unsupported in SQL Server.\n"
+        "- Use LIKE '%name%' for fuzzy name/company matching.\n"
+        "- One query per run_readonly_sql call.\n"
+        "- Database engine: Microsoft SQL Server 2018 (T-SQL).\n\n"
+
+        "## RESULT LIMITS\n"
+        "- List queries (row-level data): SELECT TOP 5 by default; respect user's number, hard cap 200.\n"
+        "- Aggregate queries (GROUP BY or SUM/COUNT/AVG/MIN/MAX): NO TOP / LIMIT.\n\n"
+
+        "## DATE RULES\n"
+        "Always derive dates from the 'today' field in get_schema_metadata — never use training-data dates.\n"
+        "  'this year'  → YEAR(col) = YEAR(GETDATE())     (e.g. 2026)\n"
+        "  'last year'  → YEAR(col) = YEAR(GETDATE())-1   (e.g. 2025)\n"
+        "  'this month' → MONTH+YEAR of today\n"
+        "  'last month' → previous calendar month\n"
+        "  'today'      → CAST(col AS DATE) = CAST(GETDATE() AS DATE)\n"
+        "When the user gives an explicit year, use it literally. Do not recompute.\n\n"
+
+        "## DISPLAY RULES\n"
+        "- ALWAYS include the customer business name and product name in results.\n"
+        "- NEVER include customer account numbers (e.g. A024874) unless explicitly requested.\n"
+        "- NEVER include product item numbers (numeric codes) unless explicitly requested.\n\n"
+
+        "## BUSINESS LOGIC\n"
+        "- 'top items' / 'best items' / 'best-selling items' = ranked by profit margin.\n"
+        "- 'top customers' / 'best clients' = ranked by annual sales performance.\n"
+        "- RFM analysis: requires Recency, Frequency, and Monetary columns.\n\n"
+
         "## FOLLOW-UP QUESTIONS\n"
-        "When the user sends a short follow-up like 'which are pending' or "
-        "'show me the top 5', refer to the previous conversation to determine "
-        "which table/columns were queried, then build a NEW SQL query that "
-        "adds the user's filter or modification. Always call "
-        "get_schema_metadata first if you haven't already in this turn.\n\n"
-        "## WORKFLOW\n"
-        "1. ALWAYS call get_schema_metadata first — it returns 'db_type' "
-        "(the SQL dialect), 'tables' with columns and sample_rows, and "
-        "'today' (use this — not your training data — for all date logic).\n"
-        "   sample_rows show column FORMAT and example values only — "
-        "they are NOT a complete census of the data. NEVER conclude that "
-        "data is missing or a year has no records based on sample_rows. "
-        "You MUST run run_readonly_sql to get real answers.\n"
-        "2. Write a read-only SELECT query in the correct SQL dialect for "
-        "the returned 'db_type', then call run_readonly_sql.\n"
-        "   For aggregate queries (SUM, COUNT, AVG, GROUP BY) do NOT add "
-        "TOP or LIMIT — the result is already bounded by the aggregation. "
-        "Only add TOP / LIMIT N when fetching raw rows.\n"
-        "3. If run_readonly_sql returns ok=false, fix the SQL and retry once.\n"
-        "4. Never invent data — rely only on tool outputs.\n"
-        "5. Present results clearly: use markdown tables for tabular data "
-        "and include a brief insight after the data."
+        "Use conversation history to resolve references like 'those customers', "
+        "'that salesperson', 'the same period', 'show me the top 5'.\n"
+        "Build a new SQL query that incorporates the user's filter or change.\n\n"
+
+        "## ERROR HANDLING\n"
+        "- If run_readonly_sql returns ok=false: fix the SQL and retry ONCE.\n"
+        "- If it fails a second time: put the error message in the JSON 'error' field.\n"
+        "- If it returns 'DATABASE_CONNECTION_ERROR': set error='DATABASE_CONNECTION_ERROR' and stop.\n\n"
+
+        "## OUTPUT FORMAT — CRITICAL\n"
+        "Return ONLY a raw JSON object. NO markdown code fences (no ```json). "
+        "NO text before or after. Your entire response MUST start with { and end with }.\n\n"
+        "Normal data query:\n"
+        "{\n"
+        '  "sql_query": "SELECT TOP 5 ... FROM dbo.vw_... WHERE ...",\n'
+        '  "columns_meta": [{"key": "col_name", "header": "Col Name", "type": "currency|numeric|string|date"}],\n'
+        '  "results": [ ... array of row objects from run_readonly_sql ... ],\n'
+        '  "columns": null,\n'
+        '  "insights": ["Insight 1.", "Insight 2.", "Insight 3."],\n'
+        '  "summary": "2-4 sentence explanation of the results.",\n'
+        '  "greetings": null,\n'
+        '  "error": null\n'
+        "}\n\n"
+        "Greeting (hello/hi/good morning): {\"greetings\": \"Hello! I am Ayra ...\", all others null}.\n"
+        "Capabilities question: explain Ayra can analyse customers/sales/orders/products/invoices/RFM in 'summary'; sql_query null.\n"
+        "Irrelevant question: {\"error\": \"This assistant focuses on sales and business data analysis.\", all others null}.\n"
+        "DB / SQL error: {\"error\": \"<error message>\", all others null}.\n"
     ),
     tools=[
+        FunctionTool(rewrite_query),
         FunctionTool(get_schema_metadata),
         FunctionTool(run_readonly_sql),
     ],
@@ -781,17 +928,15 @@ root_agent = LlmAgent(
     generate_content_config=_router_config,
     description="Multi-agent router for Agentic RAG system",
     instruction=(
-        "You are a smart routing agent. Analyze the user's question and "
-        "delegate to the right specialist:\n\n"
-        "• **database_agent** — for data, numbers, sales, orders, customers, "
-        "products, counts, totals, rankings, metrics, SQL, tables, or "
-        "anything answerable from a database.\n\n"
-        "• **rag_agent** — for policies, documents, contracts, guidelines, "
-        "handbooks, procedures, or anything answerable from uploaded "
-        "documents.\n\n"
-        "If the question is ambiguous, choose the most likely agent based on "
-        "context. Do NOT answer questions yourself — always delegate to a "
-        "specialist agent."
+        "You are a smart routing agent. Analyse the user's question and "
+        "delegate to the right specialist — never answer directly yourself.\n\n"
+        "• **database_agent** — for: data, numbers, sales, orders, customers, "
+        "products, invoices, shipments, promotions, pricing, counts, totals, "
+        "rankings, metrics, SQL, tables, greetings, or anything about Ayra's "
+        "capabilities.\n\n"
+        "• **rag_agent** — for: policies, contracts, handbooks, guidelines, "
+        "procedures, or any question answerable from uploaded documents.\n\n"
+        "If uncertain, default to database_agent."
     ),
     sub_agents=[database_agent, rag_agent],
 )
