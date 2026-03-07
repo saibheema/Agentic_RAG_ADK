@@ -862,6 +862,14 @@ if (el.dbAlias) {
 syncInputs();
 fetchDatabases();
 
+// Re-fetch databases + salespersons after user signs in.
+// fetchDatabases() runs on page load BEFORE auth resolves, so the first
+// call to /salespersons has no Bearer token → 401.  Once auth-changed fires
+// the token is available and we can populate the dropdown properly.
+window.addEventListener('auth-changed', ({ detail: { user } }) => {
+  if (user) fetchDatabases();
+});
+
 /* ── Settings page: role & DB wiring ───────────────────── */
 (function initSettingsPage() {
   const ROLE_LABELS = { '1': 'Internal', '3': 'Manager', '5': 'Salesperson' };
@@ -873,7 +881,18 @@ fetchDatabases();
 
     // Require an ID when switching to level 3 or 5
     if ((lvl === '5' || lvl === '3') && !spId) {
-      if (el.salespersonId) el.salespersonId.focus();
+      if (el.salespersonId) {
+        el.salespersonId.focus();
+        // Visual cue: highlight the dropdown
+        el.salespersonId.style.borderColor = '#f59e0b';
+        setTimeout(() => { el.salespersonId.style.borderColor = ''; }, 2000);
+      }
+      const idLabel = lvl === '3' ? 'Manager ID' : 'Salesperson ID';
+      appendMessage('agent', 'System', (target) =>
+        renderText(target, `⚠ Please select a ${idLabel} before applying.`));
+      // Switch to chat tab so the user sees the warning
+      const chatNav = document.querySelector('.sidebar-nav-item[data-tab="chat"]');
+      if (chatNav) chatNav.click();
       return;
     }
 
@@ -904,9 +923,14 @@ fetchDatabases();
     }
   }
 
-  // Role select: update row visibility on change (apply waits for the button)
+  // Role select: update row visibility on change and re-fetch the appropriate
+  // salesperson list (label + options differ between Manager and Salesperson).
   if (el.replevel) {
-    el.replevel.addEventListener('change', updateRbacBar);
+    el.replevel.addEventListener('change', () => {
+      updateRbacBar();
+      const lvl = el.replevel.value;
+      if (lvl === '3' || lvl === '5') fetchSalespersons();
+    });
   }
 
   // Apply Role button
