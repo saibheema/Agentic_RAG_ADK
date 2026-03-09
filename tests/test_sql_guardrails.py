@@ -197,6 +197,21 @@ class TestValidateReadonlySql:
 class TestInjectLimit:
     """Tests for PostgreSQL LIMIT injection (DB_TYPE=postgres)."""
 
+    def setup_method(self):
+        """Ensure postgres mode — needed because get_fast_api_app may set DB_TYPE=mssql."""
+        import agentic_rag.agent as _agent
+        self._original = os.environ.get("DB_TYPE", "")
+        os.environ["DB_TYPE"] = "postgres"
+        _agent._DB_TYPE = "postgres"
+
+    def teardown_method(self):
+        import agentic_rag.agent as _agent
+        if self._original:
+            os.environ["DB_TYPE"] = self._original
+        else:
+            os.environ.pop("DB_TYPE", None)
+        _agent._DB_TYPE = self._original or "postgres"
+
     def test_adds_limit_when_missing(self):
         result = _inject_limit_if_missing("SELECT * FROM orders", 100)
         assert result.endswith("LIMIT 100")
