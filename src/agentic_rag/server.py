@@ -151,6 +151,69 @@ def salespersons_list(db_alias: str = "") -> JSONResponse:
         return JSONResponse({"salespersons": [], "error": str(exc)})
 
 
+# ── /session-summary — per-session analytics + satisfaction tracking ─────────
+@app.post("/session-summary")
+async def session_summary(request: Request) -> JSONResponse:
+    """Record a session summary when the UI performs a proactive session reset.
+
+    The frontend calls this automatically every SESSION_RESET_TURNS turns,
+    capturing the topics the user discussed even though ADK's
+    InMemorySessionService discards the full token history on reset.
+
+    Expected JSON body::
+
+        {
+          "userId":       str,
+          "sessionId":    str,
+          "db_alias":     str,
+          "summary":      str,   # bullet list of user questions
+          "turn_count":   int,
+          "satisfaction": null,  # future: "positive" | "negative" | null
+          "tags":         []     # future: auto-classified topic tags
+        }
+
+    Firestore storage schema (TODO_STORAGE)::
+
+        Collection  : session_summaries
+        Document ID : auto-generated
+        Fields      : userId, sessionId, db_alias, summary, turn_count,
+                      satisfaction (null | "positive" | "negative"),
+                      tags (list[str]),
+                      user_email, created_at (SERVER_TIMESTAMP)
+    """
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"ok": False, "error": "invalid JSON"}, status_code=400)
+
+    _log.info(
+        "session_summary user=%s session=%s turns=%d satisfaction=%s",
+        body.get("userId", ""), body.get("sessionId", ""),
+        body.get("turn_count", 0), body.get("satisfaction"),
+    )
+
+    # TODO_STORAGE ── uncomment + validate before enabling in production ──────
+    # Firestore write — stores per-session topics + future satisfaction signals.
+    # Requires a Firestore client (see _get_firestore() in run_local.py).
+    #
+    # from google.cloud import firestore as _fs
+    # db = _fs.Client(project="unicon-494419")
+    # db.collection("session_summaries").add({
+    #     "userId":       body.get("userId", ""),
+    #     "sessionId":    body.get("sessionId", ""),
+    #     "db_alias":     body.get("db_alias", ""),
+    #     "summary":      body.get("summary", ""),
+    #     "turn_count":   body.get("turn_count", 0),
+    #     "satisfaction": body.get("satisfaction"),   # None / "positive" / "negative"
+    #     "tags":         body.get("tags", []),        # future: auto topic classification
+    #     "user_email":   getattr(request.state, "user_email", ""),
+    #     "created_at":   _fs.SERVER_TIMESTAMP,
+    # })
+    # ─────────────────────────────────────────────────────────────────────────
+
+    return JSONResponse({"ok": True})
+
+
 @app.get("/healthz/db")
 def healthz_db() -> JSONResponse:
     """Diagnostic: test TCP connectivity to configured DB hosts."""

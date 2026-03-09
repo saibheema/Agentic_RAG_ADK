@@ -483,7 +483,7 @@ async function fetchSalespersons() {
   }
 }
 
-async function createSession() {
+async function createSession(sessionContext = '') {
   saveSettings();
   const url = `${state.apiBase}/apps/${encodeURIComponent(state.appName)}/users/${encodeURIComponent(state.userId)}/sessions`;
   const authHeaders = await getAuthHeaders();
@@ -494,6 +494,10 @@ async function createSession() {
   sessionPayload.replevel = parseInt(state.replevel || '1', 10);
   sessionPayload.salesperson_id = state.salespersonId || '';
   sessionPayload.role_name = state.roleName || '';
+  // Carry previous-session topic summary so the agent retains broad context across
+  // the hard session boundary imposed by SESSION_RESET_TURNS.
+  // The agent reads this via tool_context.state["session_context"] in get_schema_metadata.
+  if (sessionContext) sessionPayload.session_context = sessionContext;
   // Derive user_name from Firebase auth if available, else fall back to userId
   const currentUser = (typeof window.Auth !== 'undefined') ? window.Auth.currentUser() : null;
   sessionPayload.user_name = (currentUser && (currentUser.displayName || currentUser.email)) || state.userId;
@@ -761,8 +765,53 @@ function renderRunEvents(events) {
 
 // Persist turn count in state so it survives navigating between panes.
 state._turnCount = 0;
+// Rolling list of user questions in the current session (max SESSION_RESET_TURNS entries).
+// Used by _buildSessionSummary() to carry topics into the next session on proactive reset.
+state._sessionHistory = [];
 // Configurable in localStorage so admins can tune without a redeploy.
 const SESSION_RESET_TURNS = parseInt(localStorage.getItem('sessionResetTurns') || '8', 10);
+
+/**
+ * Build a concise topic list from the current session to prime the next one.
+ * Returns an empty string when fewer than 2 turns exist (single-question sessions
+ * have no context worth carrying over).
+ * @returns {string} multi-line bullet string, or '' when history is small.
+ */
+function _buildSessionSummary() {
+  if (!state._sessionHistory || state._sessionHistory.length < 2) return '';
+  const bullets = state._sessionHistory
+    .slice(-SESSION_RESET_TURNS)
+    .map((t) => `• ${t.q}`)
+    .join('\n');
+  return `[Context from previous session — ${state._sessionHistory.length} questions]:\n${bullets}`;
+}
+
+/**
+ * Fire-and-forget POST to /session-summary.
+ * The backend records the summary for analytics and future satisfaction dashboards.
+ * Non-critical — failures are only console.warn'd so they never block the user.
+ * @param {string} ctx - output of _buildSessionSummary()
+ */
+function _saveSessionSummary(ctx) {
+  if (!ctx) return;
+  getAuthHeaders().then((authHeaders) => {
+    fetch(`${state.apiBase}/session-summary`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders },
+      body: JSON.stringify({
+        userId:     state.userId,
+        sessionId:  state.sessionId,       // the session that is ending
+        db_alias:   state.dbAlias || '',
+        summary:    ctx,
+        turn_count: state._turnCount,
+        // satisfaction: null — reserved for future thumbs-up / thumbs-down feature
+        satisfaction: null,
+        // tags: [] — reserved for future automatic topic classification
+        tags: [],
+      }),
+    }).catch((e) => console.warn('[_saveSessionSummary] non-critical failure:', e));
+  });
+}
 
 /** Build the /run request body for a given session ID. */
 function _buildRunBody(promptText, sessionId) {
@@ -781,8 +830,11 @@ function _buildRunBody(promptText, sessionId) {
 async function runPrompt(promptText) {
   // Proactively reset after SESSION_RESET_TURNS turns to avoid context overflow.
   if (!state.sessionId || state._turnCount >= SESSION_RESET_TURNS) {
+    const _prevCtx = _buildSessionSummary();  // capture topic list BEFORE wiping
+    _saveSessionSummary(_prevCtx);            // fire-and-forget → /session-summary
+    state._sessionHistory = [];              // fresh history slate for the new session
     state._turnCount = 0;
-    await createSession();
+    await createSession(_prevCtx);           // seed new session with topic context
   }
 
   const authHeaders = await getAuthHeaders();
@@ -799,6 +851,7 @@ async function runPrompt(promptText) {
     const errBody = await res.text();
     console.warn(`[runPrompt] ${res.status} — auto-renewing session. Server said: ${errBody}`);
     state.sessionId = '';
+    state._sessionHistory = [];              // context is lost on error-path recovery
     state._turnCount = 0;
     await createSession();
     appendMessage('agent', 'System', (target) =>
@@ -816,6 +869,9 @@ async function runPrompt(promptText) {
   }
 
   state._turnCount += 1;
+  // Record question so _buildSessionSummary() can carry it to the next session.
+  state._sessionHistory.push({ q: promptText });
+  if (state._sessionHistory.length > SESSION_RESET_TURNS) state._sessionHistory.shift();
   const events = await res.json();
   console.log('[runPrompt] raw events:', JSON.stringify(events, null, 2));
   if (!Array.isArray(events)) {
@@ -854,6 +910,7 @@ el.newSessionBtn.addEventListener('click', async () => {
   try {
     setBusy(true);
     state._turnCount = 0;
+    state._sessionHistory = [];
     await createSession();
     appendMessage('agent', 'System', (target) => renderText(target, `Session created: ${state.sessionId}`));
   } catch (err) {
@@ -876,6 +933,7 @@ if (el.dbAlias) {
     localStorage.setItem('dbAlias', state.dbAlias);
     state.sessionId = '';
     state._turnCount = 0;
+    state._sessionHistory = [];
     fetchSalespersons();           // refresh salesperson dropdown for the new DB
     const selected = el.dbAlias.options[el.dbAlias.selectedIndex];
     const dbLabel = selected ? selected.textContent : state.dbAlias;
@@ -951,6 +1009,7 @@ window.addEventListener('auth-changed', ({ detail: { user } }) => {
     // Invalidate the current session — RBAC context bakes in at session creation
     state.sessionId = '';
     state._turnCount = 0;
+    state._sessionHistory = [];
 
     const roleLabel = ROLE_LABELS[lvl] || lvl;
     const who = spId ? ` (${spId})` : '';
