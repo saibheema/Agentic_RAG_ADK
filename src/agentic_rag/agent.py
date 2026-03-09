@@ -766,9 +766,11 @@ def prewarm_schema_cache() -> None:
 
 # ── Agent definitions ────────────────────────────────────────────────────────
 
-_model = os.environ.get("AGENT_MODEL", "gemini-3.0-flash-preview")
+_model = os.environ.get("AGENT_MODEL", "gemini-2.5-flash")
 # Lightweight model for the router — it only picks between 2 sub-agents
-_router_model = os.environ.get("ROUTER_MODEL", "gemini-2.5-flash-lite")
+# NOTE: gemini-2.5-flash-lite has hidden rate limits (no explicit quota in Vertex AI);
+#       gemini-2.5-flash maps to the gemini-2.5-flash-ga quota bucket (10B tokens/day, no RPM cap)
+_router_model = os.environ.get("ROUTER_MODEL", "gemini-2.5-flash")
 
 # ── Token / thinking budget settings (tunable via env vars or Secret Manager) ─
 # Update these in Cloud Run env vars (or Secret Manager) without redeploying.
