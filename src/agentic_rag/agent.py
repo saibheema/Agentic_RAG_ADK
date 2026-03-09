@@ -444,6 +444,11 @@ def get_schema_metadata(tool_context: ToolContext) -> dict[str, Any]:
                 "replevel": int(tool_context.state.get("replevel", 1)),
                 "salesperson_id": str(tool_context.state.get("salesperson_id", "")),
             }
+            # Inject cross-session topic context set by the UI on proactive reset.
+            # Empty string on fresh sessions — the agent ignores this key when absent.
+            _session_ctx = tool_context.state.get("session_context", "")
+            if _session_ctx:
+                cached["previous_session_context"] = _session_ctx
             return cached  # type: ignore[return-value]
 
     conn = _connect(cfg)  # MUST pass cfg so the right DB alias is used
@@ -556,6 +561,11 @@ def get_schema_metadata(tool_context: ToolContext) -> dict[str, Any]:
             "replevel": int(tool_context.state.get("replevel", 1)),
             "salesperson_id": str(tool_context.state.get("salesperson_id", "")),
         }
+        # Inject cross-session topic context set by the UI on proactive reset.
+        # Empty string on fresh sessions — the agent ignores this key when absent.
+        _session_ctx = tool_context.state.get("session_context", "")
+        if _session_ctx:
+            result["previous_session_context"] = _session_ctx
         return result
     finally:
         conn.close()
