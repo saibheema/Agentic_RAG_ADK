@@ -752,31 +752,70 @@ function renderRunEvents(events) {
   }
 }
 
+// ── Session auto-renewal ─────────────────────────────────────────────────────
+// After SESSION_RESET_TURNS turns we silently start a fresh session to prevent
+// the conversation history from growing large enough to overflow the model's
+// context window (observed failure mode: 500 after ~8-9 questions).
+// On any 5xx / 404 (server restart, Cloud Run cold-start, context overflow)
+// we discard the broken session and retry once with a brand-new one.
+
+// Persist turn count in state so it survives navigating between panes.
+state._turnCount = 0;
+// Configurable in localStorage so admins can tune without a redeploy.
+const SESSION_RESET_TURNS = parseInt(localStorage.getItem('sessionResetTurns') || '8', 10);
+
+/** Build the /run request body for a given session ID. */
+function _buildRunBody(promptText, sessionId) {
+  return JSON.stringify({
+    appName: state.appName,
+    userId: state.userId,
+    sessionId,
+    newMessage: {
+      role: 'user',
+      parts: [{ text: promptText }],
+    },
+    streaming: false,
+  });
+}
+
 async function runPrompt(promptText) {
-  if (!state.sessionId) {
+  // Proactively reset after SESSION_RESET_TURNS turns to avoid context overflow.
+  if (!state.sessionId || state._turnCount >= SESSION_RESET_TURNS) {
+    state._turnCount = 0;
     await createSession();
   }
 
   const authHeaders = await getAuthHeaders();
-  const res = await fetch(`${state.apiBase}/run`, {
+  let res = await fetch(`${state.apiBase}/run`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders },
-    body: JSON.stringify({
-      appName: state.appName,
-      userId: state.userId,
-      sessionId: state.sessionId,
-      newMessage: {
-        role: 'user',
-        parts: [{ text: promptText }],
-      },
-      streaming: false,
-    }),
+    body: _buildRunBody(promptText, state.sessionId),
   });
+
+  // Auto-recover: 5xx (context overflow, unhandled server error, cold-start wipe)
+  //               404 (session evicted from server memory after idle scale-down)
+  //               422 (context overflow with specific error code from server)
+  if (res.status >= 500 || res.status === 404 || res.status === 422) {
+    const errBody = await res.text();
+    console.warn(`[runPrompt] ${res.status} — auto-renewing session. Server said: ${errBody}`);
+    state.sessionId = '';
+    state._turnCount = 0;
+    await createSession();
+    appendMessage('agent', 'System', (target) =>
+      renderText(target, '⟳ Session auto-renewed — resending your question…'));
+    const authHeaders2 = await getAuthHeaders();
+    res = await fetch(`${state.apiBase}/run`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders2 },
+      body: _buildRunBody(promptText, state.sessionId),
+    });
+  }
 
   if (!res.ok) {
     throw new Error(`Run failed: ${res.status} ${await res.text()}`);
   }
 
+  state._turnCount += 1;
   const events = await res.json();
   console.log('[runPrompt] raw events:', JSON.stringify(events, null, 2));
   if (!Array.isArray(events)) {
@@ -814,6 +853,7 @@ el.chatForm.addEventListener('submit', async (event) => {
 el.newSessionBtn.addEventListener('click', async () => {
   try {
     setBusy(true);
+    state._turnCount = 0;
     await createSession();
     appendMessage('agent', 'System', (target) => renderText(target, `Session created: ${state.sessionId}`));
   } catch (err) {
@@ -835,6 +875,7 @@ if (el.dbAlias) {
     state.dbAlias = el.dbAlias.value;
     localStorage.setItem('dbAlias', state.dbAlias);
     state.sessionId = '';
+    state._turnCount = 0;
     fetchSalespersons();           // refresh salesperson dropdown for the new DB
     const selected = el.dbAlias.options[el.dbAlias.selectedIndex];
     const dbLabel = selected ? selected.textContent : state.dbAlias;
@@ -909,6 +950,7 @@ window.addEventListener('auth-changed', ({ detail: { user } }) => {
 
     // Invalidate the current session — RBAC context bakes in at session creation
     state.sessionId = '';
+    state._turnCount = 0;
 
     const roleLabel = ROLE_LABELS[lvl] || lvl;
     const who = spId ? ` (${spId})` : '';

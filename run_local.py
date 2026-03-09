@@ -23,6 +23,9 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from google.adk.cli.fast_api import get_fast_api_app
 
+import logging as _logging
+_slog = _logging.getLogger("agentic_rag.server")
+
 try:
     from google.genai.errors import ClientError as _GenAIClientError
 except ImportError:
@@ -39,21 +42,60 @@ app: FastAPI = get_fast_api_app(
     allow_origins=["*"],
 )
 
-# ── Gemini rate-limit / API error handler ────────────────────────────────────
+# ── keywords that indicate the conversation context window is full ────────────
+_OVERFLOW_PHRASES = (
+    "request payload size exceeds",
+    "context window",
+    "too many tokens",
+    "token limit",
+    "exceeds the limit",
+    "maximum context length",
+    "input too large",
+    "prompt is too long",
+)
+
+def _is_overflow(exc_str: str) -> bool:
+    low = exc_str.lower()
+    return any(phrase in low for phrase in _OVERFLOW_PHRASES)
+
+
+# ── Gemini rate-limit / context-overflow / API error handler ─────────────────
 @app.exception_handler(Exception)
 async def _genai_error_handler(request: Request, exc: Exception) -> JSONResponse:
-    """Convert Gemini 429 / 5xx API errors into readable JSON instead of HTTP 500."""
+    """Convert Gemini API errors into readable JSON with appropriate HTTP codes.
+
+    Status codes chosen so the UI auto-recovery logic can act on them:
+      503 — rate-limited (RESOURCE_EXHAUSTED / 429): transient, just retry later.
+      422 — context overflow: UI should start a fresh session and retry.
+      502 — other Gemini API error: transient.
+      500 — unexpected server error.
+    """
+    exc_str = str(exc)
+    _slog.exception("Unhandled error on %s %s", request.method, request.url.path)
+
     if _GenAIClientError and isinstance(exc, _GenAIClientError):
-        exc_str = str(exc)
         if "429" in exc_str or "RESOURCE_EXHAUSTED" in exc_str:
             return JSONResponse(
                 {"error": "The AI model is currently busy. Please wait a moment and try again."},
                 status_code=503,
             )
+        if _is_overflow(exc_str):
+            return JSONResponse(
+                {"error": "CONTEXT_OVERFLOW: conversation history is too long. Starting a fresh session."},
+                status_code=422,
+            )
         return JSONResponse(
-            {"error": f"AI model error. Please try again."},
+            {"error": "AI model error. Please try again."},
             status_code=502,
         )
+
+    # Non-ClientError but still looks like a context overflow
+    if _is_overflow(exc_str):
+        return JSONResponse(
+            {"error": "CONTEXT_OVERFLOW: conversation history is too long. Starting a fresh session."},
+            status_code=422,
+        )
+
     # All other unhandled exceptions → generic 500
     return JSONResponse({"error": "Internal server error. Please try again."}, status_code=500)
 

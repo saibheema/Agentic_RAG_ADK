@@ -13,14 +13,39 @@ Then point the UI's API Base URL to http://localhost:8081
 
 from __future__ import annotations
 
+import logging
 import os
 import socket
 
 import uvicorn
+from fastapi import Request
 from fastapi.responses import JSONResponse
 from google.adk.cli.fast_api import get_fast_api_app
 
 from agentic_rag.connections import default_alias, list_connections
+
+_log = logging.getLogger(__name__)
+
+try:
+    from google.genai.errors import ClientError as _GenAIClientError
+except ImportError:
+    _GenAIClientError = None
+
+_OVERFLOW_PHRASES = (
+    "request payload size exceeds",
+    "context window",
+    "too many tokens",
+    "token limit",
+    "exceeds the limit",
+    "maximum context length",
+    "input too large",
+    "prompt is too long",
+)
+
+def _is_overflow(exc_str: str) -> bool:
+    low = exc_str.lower()
+    return any(phrase in low for phrase in _OVERFLOW_PHRASES)
+
 
 # agents_dir is the parent of the agentic_rag package (i.e. "src/").
 _AGENTS_DIR = os.environ.get("AGENTS_DIR", "src")
@@ -30,6 +55,34 @@ app = get_fast_api_app(
     allow_origins=["*"],
     web=False,
 )
+
+
+@app.exception_handler(Exception)
+async def _error_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Mirror the run_local.py error handler for Cloud Run deployments."""
+    exc_str = str(exc)
+    _log.exception("Unhandled error on %s %s", request.method, request.url.path)
+    if _GenAIClientError and isinstance(exc, _GenAIClientError):
+        if "429" in exc_str or "RESOURCE_EXHAUSTED" in exc_str:
+            return JSONResponse(
+                {"error": "The AI model is currently busy. Please wait a moment and try again."},
+                status_code=503,
+            )
+        if _is_overflow(exc_str):
+            return JSONResponse(
+                {"error": "CONTEXT_OVERFLOW: conversation history is too long. Starting a fresh session."},
+                status_code=422,
+            )
+        return JSONResponse(
+            {"error": "AI model error. Please try again."},
+            status_code=502,
+        )
+    if _is_overflow(exc_str):
+        return JSONResponse(
+            {"error": "CONTEXT_OVERFLOW: conversation history is too long. Starting a fresh session."},
+            status_code=422,
+        )
+    return JSONResponse({"error": "Internal server error. Please try again."}, status_code=500)
 
 
 @app.get("/databases")
