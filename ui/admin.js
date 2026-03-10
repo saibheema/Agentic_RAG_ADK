@@ -94,7 +94,7 @@
 
     let html = `
       <div class="admin-stats">
-        <span class="admin-stat-total">${users.length} registered user${users.length !== 1 ? 's' : ''}</span>
+        <span class="admin-stat-total">${users.length} user${users.length !== 1 ? 's' : ''} signed in</span>
         <span class="admin-stat-online">${onlineCount} online now</span>
         <span class="admin-stat-refresh">Updated ${now}</span>
       </div>

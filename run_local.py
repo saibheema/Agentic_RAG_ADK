@@ -257,7 +257,9 @@ async def admin_users(request: Request) -> JSONResponse:
     except Exception as exc:
         return JSONResponse({"error": str(exc)}, status_code=500)
 
-    users.sort(key=lambda u: u["lastLogin"] or "", reverse=True)
+    # Only show users who have signed in at least once (have a lastLogin timestamp).
+    users = [u for u in users if u["lastLogin"]]
+    users.sort(key=lambda u: u["lastLogin"], reverse=True)
     return JSONResponse({"users": users, "total": len(users)})
 
 
