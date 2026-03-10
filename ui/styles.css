@@ -1709,6 +1709,10 @@ td.cell-currency {
   font-size: 0.9rem;
   padding: 1.5rem;
 }
+.admin-never {
+  color: var(--muted);
+  font-style: italic;
+}
 
 /* ======= Settings View (.sett-*) ========================= */
 .sett-body {
