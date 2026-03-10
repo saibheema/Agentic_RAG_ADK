@@ -263,9 +263,11 @@ async def admin_users(request: Request) -> JSONResponse:
     except Exception as exc:
         return JSONResponse({"error": str(exc)}, status_code=500)
 
-    # Only show users who have signed in at least once (lastLogin set).
-    users = [u for u in users if u["lastLogin"]]
-    users.sort(key=lambda u: u["lastLogin"], reverse=True)
+    # Show users who have either signed in (lastLogin) OR sent a presence ping
+    # (lastActive). Firebase's last_sign_in_time returns 0 for Google OAuth
+    # federated accounts, so lastActive is the reliable "used this app" signal.
+    users = [u for u in users if u["lastLogin"] or u["lastActive"]]
+    users.sort(key=lambda u: u["lastActive"] or u["lastLogin"] or "", reverse=True)
     return JSONResponse({"users": users, "total": len(users)})
 
 
