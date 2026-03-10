@@ -263,12 +263,9 @@ async def admin_users(request: Request) -> JSONResponse:
     except Exception as exc:
         return JSONResponse({"error": str(exc)}, status_code=500)
 
-    # Show all registered users; sort by last login (most recent first),
-    # falling back to account creation date for users who have never logged in.
-    users.sort(
-        key=lambda u: u["lastLogin"] or u["createdAt"] or "",
-        reverse=True,
-    )
+    # Only show users who have signed in at least once (lastLogin set).
+    users = [u for u in users if u["lastLogin"]]
+    users.sort(key=lambda u: u["lastLogin"], reverse=True)
     return JSONResponse({"users": users, "total": len(users)})
 
 
