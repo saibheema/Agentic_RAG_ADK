@@ -94,7 +94,7 @@
 
     let html = `
       <div class="admin-stats">
-        <span class="admin-stat-total">${users.length} user${users.length !== 1 ? 's' : ''} signed in</span>
+        <span class="admin-stat-total">${users.length} user${users.length !== 1 ? 's' : ''} registered</span>
         <span class="admin-stat-online">${onlineCount} online now</span>
         <span class="admin-stat-refresh">Updated ${now}</span>
       </div>
@@ -104,6 +104,7 @@
             <tr>
               <th>Status</th>
               <th>User</th>
+              <th>Registered</th>
               <th>Last Login</th>
               <th>Last Active</th>
             </tr>
@@ -132,7 +133,8 @@
                   </div>
                 </div>
               </td>
-              <td class="ts-cell">${_fmtDateTime(u.lastLogin)}</td>
+              <td class="ts-cell">${_fmtDateTime(u.createdAt)}</td>
+              <td class="ts-cell">${u.lastLogin ? _fmtDateTime(u.lastLogin) : '<span class="admin-never">never</span>'}</td>
               <td class="ts-cell">${_fmtRelative(u.lastActive)}</td>
             </tr>`;
     }

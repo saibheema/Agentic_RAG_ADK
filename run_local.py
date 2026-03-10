@@ -126,7 +126,7 @@ except ImportError:
 
 _firebase_init_done = False
 _ADMIN_EMAIL = "sbheema@swardesi.com"
-_ONLINE_WINDOW_SEC = 120  # seconds before a user is considered offline
+_ONLINE_WINDOW_SEC = 300  # seconds before a user is considered offline (5 min; ping fires every 30 s)
 _firestore_client = None
 
 
@@ -233,33 +233,42 @@ async def admin_users(request: Request) -> JSONResponse:
         while page:
             for u in page.users:
                 meta = u.user_metadata
-                last_sign_in_ms = getattr(meta, "last_sign_in_time", None) if meta else None
-                last_login_iso: str | None = None
-                if last_sign_in_ms:
+
+                def _ms_to_iso(ms) -> str | None:
+                    if ms is None or ms == 0:
+                        return None
                     try:
-                        last_login_iso = datetime.datetime.fromtimestamp(
-                            last_sign_in_ms / 1000, tz=datetime.timezone.utc
+                        return datetime.datetime.fromtimestamp(
+                            ms / 1000, tz=datetime.timezone.utc
                         ).isoformat()
                     except Exception:
-                        pass
+                        return None
+
+                last_sign_in_ms = getattr(meta, "last_sign_in_time", None) if meta else None
+                created_ms      = getattr(meta, "creation_time",    None) if meta else None
+
                 p = presence.get(u.uid, {})
                 users.append({
-                    "uid": u.uid,
-                    "email": u.email or "",
+                    "uid":         u.uid,
+                    "email":       u.email or "",
                     "displayName": u.display_name or "",
-                    "photoURL": u.photo_url or "",
-                    "lastLogin": last_login_iso,
-                    "lastActive": p.get("lastActive"),
-                    "isOnline": p.get("isOnline", False),
-                    "disabled": u.disabled,
+                    "photoURL":    u.photo_url or "",
+                    "lastLogin":   _ms_to_iso(last_sign_in_ms),
+                    "createdAt":   _ms_to_iso(created_ms),
+                    "lastActive":  p.get("lastActive"),
+                    "isOnline":    p.get("isOnline", False),
+                    "disabled":    u.disabled,
                 })
             page = page.get_next_page()
     except Exception as exc:
         return JSONResponse({"error": str(exc)}, status_code=500)
 
-    # Only show users who have signed in at least once (have a lastLogin timestamp).
-    users = [u for u in users if u["lastLogin"]]
-    users.sort(key=lambda u: u["lastLogin"], reverse=True)
+    # Show all registered users; sort by last login (most recent first),
+    # falling back to account creation date for users who have never logged in.
+    users.sort(
+        key=lambda u: u["lastLogin"] or u["createdAt"] or "",
+        reverse=True,
+    )
     return JSONResponse({"users": users, "total": len(users)})
 
 
