@@ -6,8 +6,9 @@
   <title>Ayra</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="./styles.css" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Cdefs%3E%3ClinearGradient%20id='g'%20x1='0'%20y1='0'%20x2='1'%20y2='1'%3E%3Cstop%20offset='0'%20stop-color='%237c5cff'/%3E%3Cstop%20offset='1'%20stop-color='%2300d4ff'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect%20width='32'%20height='32'%20rx='9'%20fill='url(%23g)'/%3E%3Ctext%20x='16'%20y='22'%20font-size='19'%20text-anchor='middle'%20fill='%23fff'%20font-family='system-ui,Arial,sans-serif'%3E%E2%9C%A6%3C/text%3E%3C/svg%3E" />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700;12..96,800&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./styles.css?v=30" />
   <script src="https://cdn.jsdelivr.net/npm/marked@13/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
   <!-- Firebase compat SDK -->
@@ -15,6 +16,14 @@
   <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 </head>
 <body>
+
+<!-- ATMOSPHERE: animated 3D aurora mesh + grain -->
+<div class="aurora-bg" aria-hidden="true">
+  <span class="aurora-orb orb-1"></span>
+  <span class="aurora-orb orb-2"></span>
+  <span class="aurora-orb orb-3"></span>
+  <span class="aurora-grain"></span>
+</div>
 
 <!-- AUTH OVERLAY -->
 <div id="authOverlay" class="auth-overlay">
@@ -276,9 +285,9 @@
   </article>
 </template>
 
-<script src="./auth.js"></script>
-<script src="./app.js"></script>
-<script src="./support.js"></script>
-<script src="./admin.js"></script>
+<script src="./auth.js?v=30"></script>
+<script src="./app.js?v=30"></script>
+<script src="./support.js?v=30"></script>
+<script src="./admin.js?v=30"></script>
 </body>
 </html>

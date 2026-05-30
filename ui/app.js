@@ -110,6 +110,8 @@ function saveSettings() {
 }
 
 function appendMessage(kind, label, bodyRenderer) {
+  _clearWelcome();
+  hideTyping();
   const node = el.msgTemplate.content.firstElementChild.cloneNode(true);
   node.classList.add(kind);
   // data-label lets CSS style system/error/agent variants
@@ -123,7 +125,28 @@ function appendMessage(kind, label, bodyRenderer) {
     else avatar.textContent = '✦';
   }
   node.querySelector('.msg-meta').textContent = label;
-  bodyRenderer(node.querySelector('.msg-body'));
+  const body = node.querySelector('.msg-body');
+  bodyRenderer(body);
+
+  // Copy button on substantive assistant answers
+  if (kind === 'agent' && label === 'Assistant') {
+    const actions = document.createElement('div');
+    actions.className = 'msg-actions';
+    const copyBtn = document.createElement('button');
+    copyBtn.type = 'button';
+    copyBtn.className = 'msg-action-btn';
+    copyBtn.innerHTML = '\u29c9 Copy';
+    copyBtn.addEventListener('click', () => {
+      const text = body.innerText.trim();
+      navigator.clipboard.writeText(text).then(() => {
+        copyBtn.innerHTML = '\u2713 Copied';
+        setTimeout(() => { copyBtn.innerHTML = '\u29c9 Copy'; }, 1500);
+      }).catch(() => {});
+    });
+    actions.appendChild(copyBtn);
+    node.querySelector('.msg-content').appendChild(actions);
+  }
+
   el.chat.appendChild(node);
   el.chat.scrollTop = el.chat.scrollHeight;
 }
@@ -276,6 +299,359 @@ function renderTypedTable(target, rows, columnsMeta) {
   target.appendChild(scroll);
 }
 
+/* ── Zero-latency inline charts (pure SVG, no external library) ───────────── */
+
+const _SVG_NS = 'http://www.w3.org/2000/svg';
+const _CHART_PALETTE = ['#6366f1', '#0ea5e9', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
+
+function _svg(tag, attrs, text) {
+  const e = document.createElementNS(_SVG_NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (text != null) e.textContent = text;
+  return e;
+}
+
+/** Measure rendered text width (px) using a shared canvas — pixel-accurate, no layout. */
+let _measureCtx = null;
+function _textWidth(str, font = '600 12px system-ui, -apple-system, sans-serif') {
+  if (!_measureCtx) _measureCtx = document.createElement('canvas').getContext('2d');
+  _measureCtx.font = font;
+  return _measureCtx.measureText(String(str ?? '')).width;
+}
+
+/** Truncate a label to fit a max pixel width, adding an ellipsis. */
+function _truncToWidth(str, maxW, font) {
+  str = String(str ?? '');
+  if (_textWidth(str, font) <= maxW) return str;
+  let s = str;
+  while (s.length > 1 && _textWidth(s + '\u2026', font) > maxW) s = s.slice(0, -1);
+  return s + '\u2026';
+}
+
+/** "Nice" axis max for clean gridline ticks. */
+function _niceMax(v) {
+  if (v <= 0) return 1;
+  const pow = Math.pow(10, Math.floor(Math.log10(v)));
+  const n = v / pow;
+  const step = n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10;
+  return step * pow;
+}
+
+/** Compact human-readable value for chart labels/axes. */
+function _fmtChartValue(v, type) {
+  const n = Number(v);
+  if (!isFinite(n)) return String(v ?? '');
+  const abs = Math.abs(n);
+  const unit = (x) => (abs >= 1e9 ? (x / 1e9).toFixed(1) + 'B'
+    : abs >= 1e6 ? (x / 1e6).toFixed(1) + 'M'
+    : abs >= 1e3 ? (x / 1e3).toFixed(1) + 'K'
+    : x.toLocaleString('en-US', { maximumFractionDigits: 0 }));
+  return type === 'currency' ? '$' + unit(n) : unit(n);
+}
+
+/**
+ * Decide whether typed rows can be charted.
+ * @returns {null | {kind:'bar'|'line', labelKey:string, valueCols:Array, valueType:string}}
+ */
+function detectChartable(rows, columnsMeta) {
+  if (!Array.isArray(rows) || rows.length < 2 || rows.length > 60) return null;
+  if (!Array.isArray(columnsMeta) || columnsMeta.length < 2) return null;
+
+  const numericCols = columnsMeta.filter((c) => c.type === 'numeric' || c.type === 'currency');
+  const labelCols   = columnsMeta.filter((c) => c.type !== 'numeric' && c.type !== 'currency');
+  if (!numericCols.length || !labelCols.length) return null;
+
+  const dateCol  = columnsMeta.find((c) => c.type === 'date');
+  const labelCol = dateCol || labelCols[0];
+  const valueCols = numericCols.slice(0, 2);
+
+  // Primary value column must be fully numeric
+  const primary = valueCols[0].key;
+  if (!rows.every((r) => isFinite(Number(r[primary])))) return null;
+
+  // Labels should be mostly distinct (avoid charting raw record dumps)
+  const labels = rows.map((r) => String(r[labelCol.key] ?? ''));
+  if (new Set(labels).size < Math.max(2, Math.floor(rows.length * 0.6))) return null;
+
+  return { kind: dateCol ? 'line' : 'bar', labelKey: labelCol.key, valueCols, valueType: valueCols[0].type };
+}
+
+/** Horizontal bar chart — ideal for ranked categories (top N).
+ * Rendered at exact pixel `width` so fonts stay crisp and consistent. */
+function _buildBarChart(rows, spec, width) {
+  const col    = spec.valueCols[0];
+  const labels = rows.map((r) => String(r[spec.labelKey] ?? ''));
+  const values = rows.map((r) => Number(r[col.key]) || 0);
+  const maxAbs = Math.max(...values.map(Math.abs), 1);
+  const axisMax = _niceMax(maxAbs);
+
+  const W = Math.max(280, Math.round(width));
+  const labelFont = '500 12px system-ui, -apple-system, sans-serif';
+  const valueFont = '600 12px system-ui, -apple-system, sans-serif';
+
+  // Label column: fit longest label but cap at 38% of width.
+  const longestLabel = Math.min(
+    Math.max(...labels.map((l) => _textWidth(l, labelFont)), 40) + 12,
+    Math.floor(W * 0.38),
+  );
+  const valueW = Math.max(...values.map((v) => _textWidth(_fmtChartValue(v, col.type), valueFont)), 36) + 10;
+  const padX = 6, padTop = 6, axisH = 22;
+
+  // Adaptive row height: comfortable for few rows, compact for many — never cramped.
+  const rowH = Math.max(20, Math.min(38, Math.round(360 / rows.length)));
+  const gap  = rowH >= 30 ? 12 : rowH >= 24 ? 9 : 6;
+
+  const labelW = longestLabel;
+  const plotX  = padX + labelW;
+  const plotW  = W - labelW - valueW - padX * 2;
+  const height = padTop + rows.length * (rowH + gap) - gap + 8 + axisH;
+  const baseY  = padTop + rows.length * (rowH + gap) - gap + 4;
+
+  const svg = _svg('svg', { viewBox: `0 0 ${W} ${height}`, width: W, height, class: 'chart-svg' });
+
+  // Vertical gridlines + axis ticks (4 steps to the nice max).
+  for (let g = 0; g <= 4; g++) {
+    const gv = (axisMax * g) / 4;
+    const gx = plotX + (gv / axisMax) * plotW;
+    svg.appendChild(_svg('line', { x1: gx, y1: padTop, x2: gx, y2: baseY, class: 'chart-grid' }));
+    svg.appendChild(_svg('text', { x: gx, y: baseY + 15, class: 'chart-axis', 'text-anchor': 'middle' }, _fmtChartValue(gv, col.type)));
+  }
+
+  rows.forEach((r, i) => {
+    const y = padTop + i * (rowH + gap);
+    const v = values[i];
+    const barLen = Math.max(2, (Math.abs(v) / axisMax) * plotW);
+    const lblTxt = _truncToWidth(labels[i], labelW - 10, labelFont);
+    const valTxt = _fmtChartValue(v, col.type);
+    const lbl = _svg('text', { x: plotX - 8, y: y + rowH / 2 + 4, class: 'chart-label', 'text-anchor': 'end' }, lblTxt);
+    lbl.appendChild(_svg('title', {}, `${labels[i]}: ${valTxt}`));
+    svg.appendChild(lbl);
+    svg.appendChild(_svg('rect', { x: plotX, y, width: plotW, height: rowH, rx: 5, class: 'chart-track' }));
+    const bar = _svg('rect', { x: plotX, y, width: barLen, height: rowH, rx: 5, fill: _CHART_PALETTE[0], class: 'chart-bar' });
+    bar.appendChild(_svg('title', {}, `${labels[i]}: ${valTxt}`));
+    svg.appendChild(bar);
+    // Place value inside the bar if it fits, else just after it.
+    const valW = _textWidth(valTxt, valueFont);
+    const inside = barLen > valW + 16;
+    svg.appendChild(_svg('text', {
+      x: inside ? plotX + barLen - 7 : plotX + barLen + 7,
+      y: y + rowH / 2 + 4,
+      class: inside ? 'chart-value chart-value-in' : 'chart-value',
+      'text-anchor': inside ? 'end' : 'start',
+    }, valTxt));
+  });
+  return svg;
+}
+
+/** Multi-series line chart — ideal for time series.
+ * Rendered at exact pixel `width`; height adapts to the chat window. */
+function _buildLineChart(rows, spec, width) {
+  const labels = rows.map((r) => String(r[spec.labelKey] ?? ''));
+  const W = Math.max(280, Math.round(width));
+  const height = Math.round(Math.max(200, Math.min(320, W * 0.45)));
+  const padL = 56, padR = 16, padT = 16, padB = 40;
+  const plotW = W - padL - padR;
+  const plotH = height - padT - padB;
+
+  const series = spec.valueCols.map((c, ci) => ({
+    header: c.header, type: c.type, color: _CHART_PALETTE[ci % _CHART_PALETTE.length],
+    values: rows.map((r) => Number(r[c.key]) || 0),
+  }));
+  const all = series.flatMap((s) => s.values);
+  const rawMax = Math.max(...all, 0);
+  const minV = Math.min(...all, 0);
+  const maxV = minV < 0 ? rawMax : _niceMax(rawMax);
+  const range = (maxV - minV) || 1;
+
+  const svg = _svg('svg', { viewBox: `0 0 ${W} ${height}`, width: W, height, class: 'chart-svg' });
+  const x = (i) => padL + (rows.length === 1 ? plotW / 2 : (i / (rows.length - 1)) * plotW);
+  const y = (v) => padT + plotH - ((v - minV) / range) * plotH;
+
+  for (let g = 0; g <= 4; g++) {
+    const gv = minV + (range * g) / 4;
+    const gy = y(gv);
+    svg.appendChild(_svg('line', { x1: padL, y1: gy, x2: W - padR, y2: gy, class: 'chart-grid' }));
+    svg.appendChild(_svg('text', { x: padL - 8, y: gy + 4, class: 'chart-axis', 'text-anchor': 'end' }, _fmtChartValue(gv, spec.valueType)));
+  }
+
+  // X labels: thin out so they never overlap, based on available width.
+  const labelFont = '400 11px system-ui, -apple-system, sans-serif';
+  const maxLabels = Math.max(2, Math.floor(plotW / 70));
+  const step = Math.max(1, Math.ceil(rows.length / maxLabels));
+  labels.forEach((l, i) => {
+    if (i % step !== 0 && i !== rows.length - 1) return;
+    const t = _truncToWidth(l, 64, labelFont);
+    svg.appendChild(_svg('text', { x: x(i), y: height - padB + 20, class: 'chart-axis', 'text-anchor': 'middle' }, t));
+  });
+
+  series.forEach((s) => {
+    const d = s.values.map((v, i) => `${i === 0 ? 'M' : 'L'} ${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(' ');
+    svg.appendChild(_svg('path', { d, fill: 'none', stroke: s.color, 'stroke-width': 2.5, 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
+    s.values.forEach((v, i) => {
+      const c = _svg('circle', { cx: x(i), cy: y(v), r: 3, fill: s.color });
+      c.appendChild(_svg('title', {}, `${labels[i]}: ${_fmtChartValue(v, s.type)}`));
+      svg.appendChild(c);
+    });
+  });
+  return svg;
+}
+
+/**
+ * Render results as a Chart⇄Table card when chartable, else a plain table.
+ * Charts are built client-side from data already in hand → zero added latency.
+ */
+function renderDataWithChart(target, rows, columnsMeta) {
+  const meta = (columnsMeta && columnsMeta.length) ? columnsMeta : null;
+  const spec = meta ? detectChartable(rows, meta) : null;
+
+  if (!spec) {
+    if (meta) renderTypedTable(target, rows, meta);
+    else renderTable(target, rows);
+    return;
+  }
+
+  const wrap = document.createElement('div');
+  wrap.className = 'data-viz';
+
+  const toggle = document.createElement('div');
+  toggle.className = 'viz-toggle';
+  const btnChart = document.createElement('button');
+  btnChart.type = 'button'; btnChart.className = 'viz-tab active';
+  btnChart.innerHTML = '<span aria-hidden="true">\ud83d\udcca</span> Chart';
+  const btnTable = document.createElement('button');
+  btnTable.type = 'button'; btnTable.className = 'viz-tab';
+  btnTable.innerHTML = '<span aria-hidden="true">\u25a6</span> Table';
+  toggle.append(btnChart, btnTable);
+  wrap.appendChild(toggle);
+
+  const chartPane = document.createElement('div');
+  chartPane.className = 'viz-pane';
+  const chartScroll = document.createElement('div');
+  chartScroll.className = 'chart-scroll';
+  chartPane.appendChild(chartScroll);
+
+  // Render the chart at the pane's real pixel width so fonts stay crisp and the
+  // chart fits the chat window exactly — re-render (debounced) when it resizes.
+  const buildChart = () => {
+    const w = chartScroll.clientWidth || chartPane.clientWidth || 640;
+    chartScroll.replaceChildren(
+      spec.kind === 'line' ? _buildLineChart(rows, spec, w) : _buildBarChart(rows, spec, w),
+    );
+  };
+  buildChart();
+  if (typeof ResizeObserver !== 'undefined') {
+    let raf = 0, lastW = 0;
+    const ro = new ResizeObserver((entries) => {
+      const w = Math.round(entries[0].contentRect.width);
+      if (!w || Math.abs(w - lastW) < 8) return;
+      lastW = w;
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(buildChart);
+    });
+    ro.observe(chartScroll);
+  }
+
+  if (spec.valueCols.length > 1) {
+    const legend = document.createElement('div');
+    legend.className = 'chart-legend';
+    spec.valueCols.forEach((c, i) => {
+      const item = document.createElement('span');
+      item.className = 'legend-item';
+      item.innerHTML = `<i style="background:${_CHART_PALETTE[i % _CHART_PALETTE.length]}"></i>${c.header}`;
+      legend.appendChild(item);
+    });
+    chartPane.appendChild(legend);
+  }
+
+  const tablePane = document.createElement('div');
+  tablePane.className = 'viz-pane';
+  tablePane.style.display = 'none';
+  renderTypedTable(tablePane, rows, meta);
+
+  wrap.append(chartPane, tablePane);
+  btnChart.addEventListener('click', () => {
+    btnChart.classList.add('active'); btnTable.classList.remove('active');
+    chartPane.style.display = ''; tablePane.style.display = 'none';
+  });
+  btnTable.addEventListener('click', () => {
+    btnTable.classList.add('active'); btnChart.classList.remove('active');
+    tablePane.style.display = ''; chartPane.style.display = 'none';
+  });
+
+  target.appendChild(wrap);
+}
+
+/* ── Welcome state + live example prompts ─────────────────────────────────── */
+
+const _SUGGESTIONS = [
+  { icon: '\ud83c\udfc6', text: 'Top 5 salespeople by total sales' },
+  { icon: '\ud83d\udcc8', text: 'Monthly sales trend this year' },
+  { icon: '\ud83d\udc65', text: 'Top 10 customers by revenue' },
+  { icon: '\ud83d\udce6', text: 'Sales by product category' },
+];
+
+function _submitPromptText(text) {
+  if (!el.prompt) return;
+  el.prompt.value = text;
+  el.chatForm.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));
+}
+
+function renderWelcome() {
+  if (!el.chat || el.chat.children.length > 0) return;
+  const wrap = document.createElement('div');
+  wrap.className = 'welcome';
+
+  const logo = document.createElement('div');
+  logo.className = 'welcome-logo';
+  logo.textContent = '\u2726';
+  const title = document.createElement('h1');
+  title.className = 'welcome-title';
+  title.textContent = 'How can I help you today?';
+  const sub = document.createElement('p');
+  sub.className = 'welcome-sub';
+  sub.textContent = "Ask about your sales data in plain English — I'll query the database and visualize the answer.";
+  wrap.append(logo, title, sub);
+
+  const grid = document.createElement('div');
+  grid.className = 'welcome-chips';
+  _SUGGESTIONS.forEach((s) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'welcome-chip';
+    b.innerHTML = `<span class="chip-icon" aria-hidden="true">${s.icon}</span><span class="chip-text"></span>`;
+    b.querySelector('.chip-text').textContent = s.text;
+    b.addEventListener('click', () => _submitPromptText(s.text));
+    grid.appendChild(b);
+  });
+  wrap.appendChild(grid);
+  el.chat.appendChild(wrap);
+}
+
+function _clearWelcome() {
+  const w = el.chat && el.chat.querySelector('.welcome');
+  if (w) w.remove();
+}
+
+/* ── Typing / thinking indicator ──────────────────────────────────────────── */
+
+function showTyping() {
+  hideTyping();
+  if (!el.msgTemplate) return;
+  const node = el.msgTemplate.content.firstElementChild.cloneNode(true);
+  node.classList.add('agent');
+  node.id = '_typingIndicator';
+  node.querySelector('.msg-avatar').textContent = '\u2726';
+  node.querySelector('.msg-meta').textContent = 'Assistant';
+  node.querySelector('.msg-body').innerHTML = '<div class="typing" aria-label="Assistant is thinking"><span></span><span></span><span></span></div>';
+  el.chat.appendChild(node);
+  el.chat.scrollTop = el.chat.scrollHeight;
+}
+
+function hideTyping() {
+  const t = document.getElementById('_typingIndicator');
+  if (t) t.remove();
+}
+
 /**
  * Render the structured JSON response envelope returned by the database agent.
  */
@@ -308,13 +684,9 @@ function renderStructuredResponse(target, json) {
     target.appendChild(sqlBox);
   }
 
-  // Results table (typed if columns_meta present, plain otherwise)
+  // Results — auto-chart when the shape suits it, with a Chart⇄Table toggle
   if (json.results && json.results.length > 0) {
-    if (json.columns_meta && json.columns_meta.length > 0) {
-      renderTypedTable(target, json.results, json.columns_meta);
-    } else {
-      renderTable(target, json.results);
-    }
+    renderDataWithChart(target, json.results, json.columns_meta || []);
   } else if (json.sql_query) {
     const noData = document.createElement('p');
     noData.className = 'no-results';
@@ -690,6 +1062,7 @@ function renderTracePanel(steps) {
 }
 
 function renderRunEvents(events) {
+  hideTyping();
   const steps = buildTraceSteps(events);
   console.log('[renderRunEvents] steps:', steps.map(s => ({ type: s.type, author: s.author, text: s.text?.slice(0, 80) })));
 
@@ -733,16 +1106,14 @@ function renderRunEvents(events) {
     if (lastResponse?.data) {
       const resp = lastResponse.data;
       if (resp.ok && resp.rows && resp.rows.length > 0) {
-        appendMessage('agent', `SQL Result (${resp.row_count} rows)`, (target) => {
-          const sqlBox = document.createElement('code');
-          sqlBox.className = 'sql-display';
-          sqlBox.textContent = resp.sql_executed;
-          target.appendChild(sqlBox);
-          if (resp.columns_meta && resp.columns_meta.length > 0) {
-            renderTypedTable(target, resp.rows, resp.columns_meta);
-          } else {
-            renderTable(target, resp.rows);
+        appendMessage('agent', `${resp.source || 'SQL'} Result (${resp.row_count} rows)`, (target) => {
+          if (resp.sql_executed) {
+            const sqlBox = document.createElement('code');
+            sqlBox.className = 'sql-display';
+            sqlBox.textContent = resp.sql_executed;
+            target.appendChild(sqlBox);
           }
+          renderDataWithChart(target, resp.rows, resp.columns_meta || []);
         });
       }
     }
@@ -892,12 +1263,15 @@ el.chatForm.addEventListener('submit', async (event) => {
 
   appendMessage('user', 'You', (target) => renderText(target, prompt));
   el.prompt.value = '';
+  el.prompt.style.height = 'auto';
+  showTyping();
 
   try {
     setBusy(true);
     saveSettings();
     await runPrompt(prompt);
   } catch (err) {
+    hideTyping();
     appendMessage('agent', 'Error', (target) => {
       renderText(target, err instanceof Error ? err.message : String(err));
     });
@@ -924,6 +1298,7 @@ el.newSessionBtn.addEventListener('click', async () => {
 
 el.clearChatBtn.addEventListener('click', () => {
   el.chat.innerHTML = '';
+  renderWelcome();
 });
 
 // Re-create session when user switches DB so the new alias is in session state
@@ -965,8 +1340,7 @@ if (el.dbAlias) {
 
 syncInputs();
 fetchDatabases();
-
-// Re-fetch databases + salespersons after user signs in.
+renderWelcome();
 // fetchDatabases() runs on page load BEFORE auth resolves, so the first
 // call to /salespersons has no Bearer token → 401.  Once auth-changed fires
 // the token is available and we can populate the dropdown properly.

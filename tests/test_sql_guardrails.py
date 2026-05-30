@@ -9,7 +9,7 @@ import os
 
 import pytest
 
-from agentic_rag.agent import (
+from agentic_rag.agents.mssql_agent import (
     _check_rbac_access,
     _inject_limit_if_missing,
     _is_mssql,
@@ -199,13 +199,13 @@ class TestInjectLimit:
 
     def setup_method(self):
         """Ensure postgres mode — needed because get_fast_api_app may set DB_TYPE=mssql."""
-        import agentic_rag.agent as _agent
+        import agentic_rag.agents.mssql_agent as _agent
         self._original = os.environ.get("DB_TYPE", "")
         os.environ["DB_TYPE"] = "postgres"
         _agent._DB_TYPE = "postgres"
 
     def teardown_method(self):
-        import agentic_rag.agent as _agent
+        import agentic_rag.agents.mssql_agent as _agent
         if self._original:
             os.environ["DB_TYPE"] = self._original
         else:
@@ -244,7 +244,7 @@ class TestInjectTop:
         self._original = os.environ.get("DB_TYPE", "")
         os.environ["DB_TYPE"] = "mssql"
         # Reload the module-level _DB_TYPE
-        import agentic_rag.agent as _agent
+        import agentic_rag.agents.mssql_agent as _agent
         _agent._DB_TYPE = "mssql"
 
     def teardown_method(self):
@@ -253,7 +253,7 @@ class TestInjectTop:
             os.environ["DB_TYPE"] = self._original
         else:
             os.environ.pop("DB_TYPE", None)
-        import agentic_rag.agent as _agent
+        import agentic_rag.agents.mssql_agent as _agent
         _agent._DB_TYPE = self._original or "postgres"
 
     def test_adds_top_when_missing(self):
@@ -338,12 +338,12 @@ class TestInjectTop:
 class TestIsMssql:
     def _set_db_type(self, value):
         os.environ["DB_TYPE"] = value
-        import agentic_rag.agent as _agent
+        import agentic_rag.agents.mssql_agent as _agent
         _agent._DB_TYPE = value.strip().lower()
 
     def teardown_method(self):
         os.environ.pop("DB_TYPE", None)
-        import agentic_rag.agent as _agent
+        import agentic_rag.agents.mssql_agent as _agent
         _agent._DB_TYPE = "postgres"
 
     def test_postgres_is_not_mssql(self):
