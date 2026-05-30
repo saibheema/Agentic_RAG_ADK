@@ -19,7 +19,7 @@ import threading
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from google.adk.cli.fast_api import get_fast_api_app
 
@@ -177,11 +177,33 @@ async def firebase_auth_middleware(request: Request, call_next):
 # ── /ping — presence heartbeat (every 30 s from the UI) ─────────────────────
 @app.post("/ping")
 async def presence_ping(request: Request) -> JSONResponse:
-    """Record that the authenticated user is currently active."""
+    """Record that the user is currently active.
+
+    When auth is enforced, the middleware has already populated request.state
+    from the verified token. When AUTH_DISABLED is set the middleware is
+    skipped, so best-effort decode any Bearer token here purely to record
+    presence — without ever rejecting the heartbeat (it is a non-critical,
+    fire-and-forget signal from the UI).
+    """
     uid = getattr(request.state, "user_uid", "")
     email = getattr(request.state, "user_email", "")
+
+    # Best-effort token decode when the middleware didn't run (AUTH_DISABLED).
+    if not uid and _FIREBASE_AVAILABLE:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            try:
+                _init_firebase_once()
+                decoded = _fb_auth.verify_id_token(auth_header[7:])
+                uid = decoded.get("uid", "")
+                email = decoded.get("email", "")
+            except Exception:
+                uid = ""
+
     if not uid:
-        return JSONResponse({"ok": False}, status_code=401)
+        # No identity available (e.g. auth disabled / no token) — ack without
+        # recording so the UI heartbeat never logs a 401.
+        return JSONResponse({"ok": True, "recorded": False})
     try:
         from google.cloud import firestore
         db = _get_firestore()
@@ -192,7 +214,7 @@ async def presence_ping(request: Request) -> JSONResponse:
     except Exception as exc:
         import logging as _lg
         _lg.getLogger(__name__).warning("Presence ping failed: %s", exc)
-    return JSONResponse({"ok": True})
+    return JSONResponse({"ok": True, "recorded": True})
 
 
 # ── /admin/users — active users + last login (admin only) ─────────────────────
@@ -200,11 +222,25 @@ async def presence_ping(request: Request) -> JSONResponse:
 async def admin_users(request: Request) -> JSONResponse:
     """Return all Firebase Auth users with last-login and online status.
     Restricted to the admin account only."""
-    user_email = getattr(request.state, "user_email", "")
-    if user_email != _ADMIN_EMAIL:
-        return JSONResponse({"error": "Forbidden"}, status_code=403)
     if not _FIREBASE_AVAILABLE:
         return JSONResponse({"error": "Firebase Admin not available"}, status_code=503)
+
+    user_email = getattr(request.state, "user_email", "")
+
+    # Best-effort token decode when the middleware didn't run (AUTH_DISABLED),
+    # so the admin can still be identified from a valid Bearer token.
+    if not user_email:
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            try:
+                _init_firebase_once()
+                decoded = _fb_auth.verify_id_token(auth_header[7:])
+                user_email = decoded.get("email", "")
+            except Exception:
+                user_email = ""
+
+    if user_email != _ADMIN_EMAIL:
+        return JSONResponse({"error": "Forbidden"}, status_code=403)
     _init_firebase_once()
 
     # ── 1. Presence data (Firestore) ─────────────────────────────────────────
@@ -430,6 +466,20 @@ def healthz_db() -> JSONResponse:
 _UI_DIR = os.path.join(_HERE, "ui")
 if os.path.isdir(_UI_DIR):
     app.mount("/app", StaticFiles(directory=_UI_DIR, html=True), name="ui")
+
+
+# ── Favicon — inline SVG of the Ayra ✦ mark (avoids a 404 on /favicon.ico) ──
+_FAVICON_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
+    '<rect width="32" height="32" rx="7" fill="#6366f1"/>'
+    '<text x="16" y="22" font-size="20" text-anchor="middle" fill="#fff" '
+    'font-family="system-ui,Arial,sans-serif">\u2726</text></svg>'
+)
+
+
+@app.get("/favicon.ico")
+def _favicon() -> Response:
+    return Response(content=_FAVICON_SVG, media_type="image/svg+xml")
 
 
 @app.get("/")
